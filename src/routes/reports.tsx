@@ -1,12 +1,13 @@
 import { Hono } from "hono";
 import { eq, asc } from "drizzle-orm";
-import { writeFileSync, mkdirSync, readFileSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync, existsSync, copyFileSync } from "fs";
 import convert from "heic-convert";
 import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { extractFromPhoto, type ExtractedData } from "../lib/extract.ts";
 import { checkBadges } from "../lib/badges.ts";
 import { predictUser, predictAll } from "../lib/predict.ts";
+import { DEMO_MAX_UPLOADS } from "../lib/demo.ts";
 import { Layout } from "../views/layout.tsx";
 
 const DATA_DIR = process.env.DATABASE_PATH
@@ -64,6 +65,18 @@ reports.get("/upload", (c) => {
     ];
   }
 
+  // Check demo upload limit
+  const isDemo = !!(user as any).isDemo;
+  const demoUploadsUsed = isDemo
+    ? db.select({ id: schema.reports.id }).from(schema.reports)
+        .where(eq(schema.reports.userId, user.id)).all()
+        .filter((r: any) => r.photoPath != null).length  // only count real uploads (not seeded)
+    : 0;
+  const demoLimitReached = isDemo && demoUploadsUsed >= DEMO_MAX_UPLOADS;
+
+  // Check if sample photo exists
+  const sampleExists = isDemo && existsSync(`${DATA_DIR}/samples/sample-inbody.jpg`);
+
   return c.html(
     <Layout title="上傳報告" user={user}>
       <div style="max-width:500px;margin:0 auto;">
@@ -80,28 +93,53 @@ reports.get("/upload", (c) => {
           ))}
         </div>
 
-        {/* Upload form - the desert oasis */}
-        <form
-          method="post"
-          action="/upload"
-          enctype="multipart/form-data"
-          onsubmit="document.getElementById('submit-btn').disabled=true;document.getElementById('submit-btn').textContent='AI 分析中，請稍候...';document.getElementById('upload-progress').style.display='block';"
-        >
-          <label id="drop-zone" style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
-            <div id="drop-icon" style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
-            <div id="drop-text" style="font-size:0.9rem;">選擇照片或拖放到此處</div>
-            <div id="drop-hint" style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">JPEG、PNG、HEIC，最大 5MB</div>
-            <input type="file" name="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required
-              style="display:none;"
-              onchange="document.getElementById('drop-icon').textContent='✅';document.getElementById('drop-text').textContent=this.files[0].name;document.getElementById('drop-hint').textContent=((this.files[0].size/1024/1024).toFixed(1))+' MB';document.getElementById('drop-zone').style.borderColor='var(--pico-primary)';" />
-          </label>
-          <button id="submit-btn" type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;" aria-busy="false">
-            上傳並分析
-          </button>
-          <div id="upload-progress" style="display:none;text-align:center;margin-top:1rem;font-size:0.9rem;opacity:0.7;">
-            正在上傳照片並用 AI 辨識數據，通常需要 10~20 秒...
+        {/* Demo: sample photo quick-try */}
+        {isDemo && sampleExists && !demoLimitReached && (
+          <div style="margin-bottom:1.5rem;padding:1.25rem;background:linear-gradient(135deg,rgba(59,130,246,0.05),rgba(139,92,246,0.05));border:1px solid var(--pico-primary);border-radius:8px;text-align:center;">
+            <div style="font-size:0.85rem;opacity:0.7;margin-bottom:0.75rem;">沒有 InBody 報告？試試範例照片</div>
+            <form method="post" action="/upload/sample"
+              onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='AI 分析中，請稍候...';document.getElementById('sample-progress')&&(document.getElementById('sample-progress').style.display='block');">
+              <button type="submit" class="outline" style="width:100%;font-size:1rem;padding:0.6rem;">
+                使用範例 InBody 報告
+              </button>
+              <div id="sample-progress" style="display:none;text-align:center;margin-top:0.75rem;font-size:0.85rem;opacity:0.7;">
+                正在用 AI 辨識範例報告，通常需要 10~20 秒...
+              </div>
+            </form>
           </div>
-        </form>
+        )}
+
+        {demoLimitReached && (
+          <div style="margin-bottom:1.5rem;padding:1rem;background:rgba(239,68,68,0.05);border:1px solid rgba(239,68,68,0.3);border-radius:8px;text-align:center;font-size:0.9rem;">
+            Demo 帳號最多可上傳 {DEMO_MAX_UPLOADS} 筆報告。<br/>
+            <a href="/dashboard">回到儀表板查看已有的分析結果</a>
+          </div>
+        )}
+
+        {/* Upload form - the desert oasis */}
+        {!demoLimitReached && (
+          <form
+            method="post"
+            action="/upload"
+            enctype="multipart/form-data"
+            onsubmit="document.getElementById('submit-btn').disabled=true;document.getElementById('submit-btn').textContent='AI 分析中，請稍候...';document.getElementById('upload-progress').style.display='block';"
+          >
+            <label id="drop-zone" style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
+              <div id="drop-icon" style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
+              <div id="drop-text" style="font-size:0.9rem;">選擇照片或拖放到此處</div>
+              <div id="drop-hint" style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">JPEG、PNG、HEIC，最大 5MB</div>
+              <input type="file" name="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required
+                style="display:none;"
+                onchange="document.getElementById('drop-icon').textContent='✅';document.getElementById('drop-text').textContent=this.files[0].name;document.getElementById('drop-hint').textContent=((this.files[0].size/1024/1024).toFixed(1))+' MB';document.getElementById('drop-zone').style.borderColor='var(--pico-primary)';" />
+            </label>
+            <button id="submit-btn" type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;" aria-busy="false">
+              上傳並分析
+            </button>
+            <div id="upload-progress" style="display:none;text-align:center;margin-top:1rem;font-size:0.9rem;opacity:0.7;">
+              正在上傳照片並用 AI 辨識數據，通常需要 10~20 秒...
+            </div>
+          </form>
+        )}
       </div>
     </Layout>
   );
@@ -110,6 +148,19 @@ reports.get("/upload", (c) => {
 // Upload handler
 reports.post("/upload", async (c) => {
   const user = requireAuth(c);
+
+  // Demo upload limit
+  if ((user as any).isDemo) {
+    const uploadCount = db.select({ id: schema.reports.id, photoPath: schema.reports.photoPath })
+      .from(schema.reports)
+      .where(eq(schema.reports.userId, user.id))
+      .all()
+      .filter((r) => r.photoPath != null).length;
+    if (uploadCount >= DEMO_MAX_UPLOADS) {
+      return c.redirect("/upload");
+    }
+  }
+
   const body = await c.req.parseBody();
   const photo = body.photo;
 
@@ -217,6 +268,62 @@ reports.post("/upload", async (c) => {
           AI 分析失敗：{error.message}
         </div>
         <p>你可以重新上傳，或聯繫管理員。</p>
+        <a href="/upload">重新上傳</a>
+      </Layout>,
+      500
+    );
+  }
+});
+
+// Upload sample photo (demo mode)
+reports.post("/upload/sample", async (c) => {
+  const user = requireAuth(c);
+  if (!(user as any).isDemo) return c.redirect("/upload");
+
+  const samplePath = `${DATA_DIR}/samples/sample-inbody.jpg`;
+  if (!existsSync(samplePath)) {
+    return c.html(
+      <Layout title="錯誤" user={user}>
+        <div class="flash flash-error">範例照片不存在</div>
+        <a href="/upload">返回上傳頁面</a>
+      </Layout>,
+      500
+    );
+  }
+
+  // Copy sample to photos dir
+  const timestamp = Date.now();
+  mkdirSync(PHOTO_DIR, { recursive: true });
+  const filename = `${user.id}_${timestamp}.jpg`;
+  copyFileSync(samplePath, `${PHOTO_DIR}/${filename}`);
+
+  // Create report record
+  const result = db
+    .insert(schema.reports)
+    .values({
+      userId: user.id,
+      measuredAt: new Date().toISOString().slice(0, 16),
+      photoPath: filename,
+      confirmed: false,
+    })
+    .returning()
+    .get();
+
+  // Extract data with AI (same flow as regular upload)
+  try {
+    const { data, rawResponse } = await extractFromPhoto(`${PHOTO_DIR}/${filename}`);
+    db.update(schema.reports)
+      .set({
+        rawJson: rawResponse,
+        measuredAt: data.measured_at || result.measuredAt,
+      })
+      .where(eq(schema.reports.id, result.id))
+      .run();
+    return c.redirect(`/report/${result.id}/confirm`);
+  } catch (error: any) {
+    return c.html(
+      <Layout title="分析失敗" user={user}>
+        <div class="flash flash-error">AI 分析失敗：{error.message}</div>
         <a href="/upload">重新上傳</a>
       </Layout>,
       500

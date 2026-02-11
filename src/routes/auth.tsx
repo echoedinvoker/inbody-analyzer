@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq, and, isNotNull } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
 import { createSession, destroySession } from "../lib/session.ts";
+import { getOrCreateDemoUser } from "../lib/demo.ts";
 import { Layout } from "../views/layout.tsx";
 
 const auth = new Hono();
@@ -34,6 +35,15 @@ auth.get("/login", (c) => {
         </label>
         <button type="submit">登入</button>
       </form>
+
+      <div style="text-align:center;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--pico-muted-border-color);">
+        <p style="font-size:0.85rem;opacity:0.6;margin-bottom:0.75rem;">沒有邀請碼？</p>
+        <form method="post" action="/login/demo">
+          <button type="submit" class="outline" style="width:100%;">
+            以訪客身份體驗
+          </button>
+        </form>
+      </div>
     </Layout>
   );
 });
@@ -70,6 +80,13 @@ auth.post("/login", async (c) => {
   }
 
   createSession(c, user.id);
+  return c.redirect("/dashboard");
+});
+
+// Demo login - create/reset demo user and log in
+auth.post("/login/demo", (c) => {
+  const userId = getOrCreateDemoUser();
+  createSession(c, userId);
   return c.redirect("/dashboard");
 });
 

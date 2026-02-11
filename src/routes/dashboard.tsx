@@ -12,19 +12,22 @@ const dashboard = new Hono();
 dashboard.get("/dashboard", async (c) => {
   const user = requireAuth(c);
 
-  // Get recent activity across all users (for feed)
+  // Get recent activity across all users (for feed), excluding demo users
   const recentActivity = db
     .select({
       userName: schema.users.name,
       userId: schema.reports.userId,
+      isDemo: schema.users.isDemo,
       measuredAt: schema.reports.measuredAt,
     })
     .from(schema.reports)
     .innerJoin(schema.users, eq(schema.reports.userId, schema.users.id))
     .where(eq(schema.reports.confirmed, true))
     .orderBy(desc(schema.reports.measuredAt))
-    .limit(10)
-    .all();
+    .limit(20)
+    .all()
+    .filter((a) => !a.isDemo || a.userId === user.id)  // show own demo activity, hide others
+    .slice(0, 10);
 
   // Get prediction for this user
   const myPrediction = predictUser(user.id);

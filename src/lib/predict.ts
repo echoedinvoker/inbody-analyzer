@@ -85,7 +85,7 @@ export function predictUser(userId: number): Prediction | null {
  * Get predictions for all users, sorted by most fat loss (most negative change first)
  */
 export function predictAll(): Prediction[] {
-  const users = db.select().from(schema.users).all();
+  const users = db.select().from(schema.users).all().filter((u) => !u.isDemo);
   const predictions: Prediction[] = [];
 
   for (const u of users) {

@@ -7,6 +7,7 @@ export type SessionUser = {
   id: number;
   name: string;
   isAdmin: boolean;
+  isDemo: boolean;
   goal: string;
   competitionStart: string | null;
   competitionEnd: string | null;
@@ -31,6 +32,7 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
       userId: schema.sessions.userId,
       name: schema.users.name,
       isAdmin: schema.users.isAdmin,
+      isDemo: schema.users.isDemo,
       goal: schema.users.goal,
       competitionStart: schema.users.competitionStart,
       competitionEnd: schema.users.competitionEnd,
@@ -53,6 +55,7 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     id: row.userId,
     name: row.name,
     isAdmin: row.isAdmin ?? false,
+    isDemo: row.isDemo ?? false,
     goal: row.goal ?? "maintain",
     competitionStart: row.competitionStart ?? null,
     competitionEnd: row.competitionEnd ?? null,

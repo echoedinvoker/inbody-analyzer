@@ -30,8 +30,8 @@ leaderboard.get("/leaderboard", (c) => {
     ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
     : null;
 
-  // Get all users with at least 2 confirmed measurements
-  const allUsers = db.select().from(schema.users).all();
+  // Get all non-demo users with at least 2 confirmed measurements
+  const allUsers = db.select().from(schema.users).all().filter((u) => !u.isDemo);
 
   type RankEntry = {
     userId: number;

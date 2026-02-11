@@ -6,6 +6,7 @@ export const users = sqliteTable("users", {
   inviteCode: text("invite_code").unique(),
   isAdmin: integer("is_admin", { mode: "boolean" }).default(false),
   goal: text("goal", { enum: ["cut", "bulk", "maintain"] }).default("maintain"),
+  isDemo: integer("is_demo", { mode: "boolean" }).default(false),
   competitionStart: text("competition_start"),
   competitionEnd: text("competition_end"),
   createdAt: text("created_at").default("(datetime('now'))"),
