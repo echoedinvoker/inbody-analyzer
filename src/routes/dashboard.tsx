@@ -150,13 +150,13 @@ dashboard.get("/dashboard", async (c) => {
   return c.html(
     <Layout title="儀表板" user={user}>
       {/* Hero section: competition status + prominent upload CTA (Desert Oasis) */}
-      <div style="display:grid;grid-template-columns:1fr auto;gap:1.5rem;align-items:center;padding:1.25rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
-        <div>
+      <div class="hero-section">
+        <div style="flex:1;min-width:0;">
           <CompetitionProgress user={user} prediction={myPrediction} rank={myRank} totalPredicted={totalPredicted} />
           {myBadges.length > 0 && <BadgeDisplay badges={myBadges} />}
         </div>
         {/* THE oasis: the one thing that stands out */}
-        <div style="text-align:center;">
+        <div class="hero-upload">
           <a href="/upload" role="button" style="font-size:1.1rem;padding:1rem 1.5rem;white-space:nowrap;display:block;">
             📸 上傳新報告
           </a>
@@ -180,16 +180,16 @@ dashboard.get("/dashboard", async (c) => {
         <div>
           <h3>趨勢圖表</h3>
           <div style="margin-bottom:1.5rem;">
-            <canvas id="weightChart" height="60"></canvas>
+            <canvas id="weightChart" height="180"></canvas>
           </div>
           <div style="margin-bottom:1.5rem;">
-            <canvas id="muscleChart" height="60"></canvas>
+            <canvas id="muscleChart" height="180"></canvas>
           </div>
           <div style="margin-bottom:1.5rem;">
-            <canvas id="fatMassChart" height="60"></canvas>
+            <canvas id="fatMassChart" height="180"></canvas>
           </div>
           <div style="margin-bottom:2rem;">
-            <canvas id="fatPctChart" height="60"></canvas>
+            <canvas id="fatPctChart" height="180"></canvas>
           </div>
         </div>
       ) : (
@@ -429,6 +429,7 @@ function buildChartScript(
         },
         options: {
           responsive: true,
+          maintainAspectRatio: false,
           plugins: {
             title: { display: true, text: label },
             legend: { display: false },
@@ -509,6 +510,7 @@ function buildChartScript(
       data: { labels: fatLabels, datasets: fatDatasets },
       options: {
         responsive: true,
+        maintainAspectRatio: false,
         plugins: {
           title: { display: true, text: prediction ? '體脂率趨勢（含預測）' : '體脂率趨勢' },
           legend: { position: 'bottom' },

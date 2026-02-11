@@ -28,10 +28,14 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
         .table-wrap { overflow-x: auto; }
         .table-wrap table { white-space: nowrap; }
         canvas { max-width: 100%; }
+        .hero-section { display: flex; gap: 1.5rem; align-items: center; padding: 1.25rem; background: var(--pico-card-background-color); border-radius: 12px; margin-bottom: 1.5rem; }
+        .hero-upload { text-align: center; flex-shrink: 0; }
         @media (max-width: 768px) {
           div[style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
           nav a { margin-left: 0.4rem; font-size: 0.85rem; }
           table { display: block; overflow-x: auto; white-space: nowrap; }
+          .hero-section { flex-direction: column; }
+          .hero-upload { width: 100%; }
         }
       `}</style>
     </head>
