@@ -95,17 +95,20 @@ admin.get("/admin", (c) => {
               <td>{u.latest?.measuredAt?.slice(0, 10) ?? "—"}</td>
               <td>
                 {u.competitionStart ? (
-                  <details class="inline-edit" style="margin:0;">
-                    <summary style="cursor:pointer;font-size:0.85rem;">
+                  <div>
+                    <span
+                      style="cursor:pointer;font-size:0.85rem;"
+                      onclick={`this.style.display='none';this.nextElementSibling.style.display='flex';`}
+                    >
                       {u.competitionStart} ~ {u.competitionEnd ?? "?"}
-                    </summary>
-                    <form method="post" action={`/admin/user/${u.id}/competition`} style="display:flex;gap:0.25rem;align-items:center;margin:0.5rem 0 0;">
+                    </span>
+                    <form method="post" action={`/admin/user/${u.id}/competition`} style="display:none;gap:0.25rem;align-items:center;margin:0;">
                       <input type="date" name="start" value={u.competitionStart} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;margin:0;" />
                       <span>~</span>
                       <input type="date" name="end" value={u.competitionEnd ?? ""} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;margin:0;" />
                       <button type="submit" style="all:unset;cursor:pointer;color:var(--pico-primary);font-size:0.8rem;white-space:nowrap;">儲存</button>
                     </form>
-                  </details>
+                  </div>
                 ) : "未開始"}
               </td>
               <td>
