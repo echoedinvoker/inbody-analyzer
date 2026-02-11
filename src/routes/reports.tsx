@@ -9,6 +9,7 @@ import { checkBadges } from "../lib/badges.ts";
 import { predictUser, predictAll } from "../lib/predict.ts";
 import { DEMO_MAX_UPLOADS } from "../lib/demo.ts";
 import { Layout } from "../views/layout.tsx";
+import { Icon, iconSvg } from "../views/icons.tsx";
 
 const DATA_DIR = process.env.DATABASE_PATH
   ? process.env.DATABASE_PATH.replace(/\/[^/]+$/, "")
@@ -41,27 +42,27 @@ reports.get("/upload", (c) => {
   let previewItems: { icon: string; text: string }[] = [];
   if (reportCount === 0) {
     previewItems = [
-      { icon: "🎯", text: "開始你的減脂比賽" },
-      { icon: "📊", text: "建立身體組成基準數據" },
-      { icon: "🏅", text: "獲得第一枚徽章" },
+      { icon: "target", text: "開始你的減脂比賽" },
+      { icon: "bar-chart-3", text: "建立身體組成基準數據" },
+      { icon: "award", text: "獲得第一枚徽章" },
     ];
   } else if (reportCount === 1) {
     previewItems = [
-      { icon: "📈", text: "解鎖趨勢圖和預測功能" },
-      { icon: "🔮", text: "查看你的預測排名" },
-      { icon: "🏅", text: "獲得「有跡可循」徽章" },
+      { icon: "trending-up", text: "解鎖趨勢圖和預測功能" },
+      { icon: "sparkles", text: "查看你的預測排名" },
+      { icon: "award", text: "獲得「有跡可循」徽章" },
     ];
   } else if (reportCount < 4) {
     previewItems = [
-      { icon: "🤖", text: `再 ${4 - reportCount} 筆解鎖 AI 個人化建議` },
-      { icon: "🎯", text: "更新你的趨勢預測" },
-      { icon: "📊", text: "更精確的排名預測" },
+      { icon: "bot", text: `再 ${4 - reportCount} 筆解鎖 AI 個人化建議` },
+      { icon: "target", text: "更新你的趨勢預測" },
+      { icon: "bar-chart-3", text: "更精確的排名預測" },
     ];
   } else {
     previewItems = [
-      { icon: "📊", text: "更新趨勢分析" },
-      { icon: "🔮", text: "刷新排名預測" },
-      { icon: "🤖", text: "獲得最新 AI 建議" },
+      { icon: "bar-chart-3", text: "更新趨勢分析" },
+      { icon: "sparkles", text: "刷新排名預測" },
+      { icon: "bot", text: "獲得最新 AI 建議" },
     ];
   }
 
@@ -83,11 +84,11 @@ reports.get("/upload", (c) => {
         <h2 style="text-align:center;">上傳 InBody 報告</h2>
 
         {/* Motivation preview - what uploading gives you */}
-        <div style="margin-bottom:1.5rem;padding:1rem;background:var(--pico-card-background-color);border-radius:8px;">
+        <div class="ib-card" style="padding:1rem;">
           <div style="font-size:0.85rem;opacity:0.6;margin-bottom:0.5rem;">上傳後你將</div>
           {previewItems.map((item) => (
             <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.9rem;">
-              <span>{item.icon}</span>
+              <Icon name={item.icon} size={18} color="var(--ib-primary)" />
               <span>{item.text}</span>
             </div>
           ))}
@@ -99,7 +100,7 @@ reports.get("/upload", (c) => {
             <div style="font-size:0.85rem;opacity:0.7;margin-bottom:0.75rem;">沒有 InBody 報告？試試範例照片</div>
             <form method="post" action="/upload/sample"
               onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='AI 分析中，請稍候...';document.getElementById('sample-progress')&&(document.getElementById('sample-progress').style.display='block');">
-              <button type="submit" class="outline" style="width:100%;font-size:1rem;padding:0.6rem;">
+              <button type="submit" class="btn-outline" style="width:100%;font-size:1rem;padding:0.6rem;">
                 使用範例 InBody 報告
               </button>
               <div id="sample-progress" style="display:none;text-align:center;margin-top:0.75rem;font-size:0.85rem;opacity:0.7;">
@@ -124,15 +125,16 @@ reports.get("/upload", (c) => {
             enctype="multipart/form-data"
             onsubmit="document.getElementById('submit-btn').disabled=true;document.getElementById('submit-btn').textContent='AI 分析中，請稍候...';document.getElementById('upload-progress').style.display='block';"
           >
-            <label id="drop-zone" style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
-              <div id="drop-icon" style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
+            <label id="drop-zone" style="display:block;padding:2rem;border:2px dashed var(--ib-border);border-radius:12px;text-align:center;cursor:pointer;margin-bottom:1rem;transition:border-color 0.15s;">
+              <div id="drop-icon" style="margin-bottom:0.5rem;">{Icon({ name: "camera", size: 36, color: "var(--ib-text-muted)" })}</div>
               <div id="drop-text" style="font-size:0.9rem;">選擇照片或拖放到此處</div>
               <div id="drop-hint" style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">JPEG、PNG、HEIC，最大 5MB</div>
               <input type="file" name="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required
                 style="display:none;"
-                onchange="document.getElementById('drop-icon').textContent='✅';document.getElementById('drop-text').textContent=this.files[0].name;document.getElementById('drop-hint').textContent=((this.files[0].size/1024/1024).toFixed(1))+' MB';document.getElementById('drop-zone').style.borderColor='var(--pico-primary)';" />
+                onchange={`document.getElementById('drop-icon').innerHTML='${iconSvg("check-circle", 36, "var(--ib-success)")}';document.getElementById('drop-text').textContent=this.files[0].name;document.getElementById('drop-hint').textContent=((this.files[0].size/1024/1024).toFixed(1))+' MB';document.getElementById('drop-zone').style.borderColor='var(--ib-primary)';`} />
             </label>
-            <button id="submit-btn" type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;" aria-busy="false">
+            <button id="submit-btn" type="submit" class="btn-primary" style="width:100%;font-size:1.1rem;padding:0.75rem;" aria-busy="false">
+              <Icon name="upload" size={20} color="#fff" />
               上傳並分析
             </button>
             <div id="upload-progress" style="display:none;text-align:center;margin-top:1rem;font-size:0.9rem;opacity:0.7;">
@@ -445,8 +447,9 @@ reports.get("/report/:id/confirm", (c) => {
               </details>
             )}
 
-            <button type="submit" style="width:100%;font-size:1.05rem;padding:0.75rem;">
-              確認並查看你的進步 →
+            <button type="submit" class="btn-success" style="width:100%;font-size:1.05rem;padding:0.75rem;">
+              <Icon name="check" size={20} color="#fff" />
+              確認並查看你的進步
             </button>
           </form>
         </div>
@@ -695,14 +698,14 @@ reports.get("/report/:id/success", (c) => {
           padding: 1rem; border-radius: 8px; text-align: center;
           background: var(--pico-card-background-color);
         }
-        .change-good { border-left: 4px solid #22c55e; }
-        .change-bad { border-left: 4px solid #ef4444; }
+        .change-good { border-left: 4px solid var(--ib-success); }
+        .change-bad { border-left: 4px solid var(--ib-danger); }
         .win-hero { text-align: center; padding: 2rem 1rem; }
         .win-section { animation: slide-up 0.4s ease-out both; margin-bottom: 1.5rem; }
       `}</style>
 
       <div class="win-hero">
-        <div style="font-size:3rem;margin-bottom:0.5rem;">🎉</div>
+        <div style="margin-bottom:0.75rem;"><Icon name="party-popper" size={48} color="var(--ib-primary)" /></div>
         <h1 style="margin:0 0 0.5rem;">數據已記錄！</h1>
         <p style="opacity:0.7;margin:0;">
           第 {reportCount} 筆數據 · {report.measuredAt?.slice(0, 10)}
@@ -717,7 +720,7 @@ reports.get("/report/:id/success", (c) => {
             {changes.map((ch, i) => (
               <div class={`change-card ${ch.isGood ? "change-good" : "change-bad"}`}
                    style={`animation-delay:${0.15 + i * 0.1}s;`}>
-                <div style={`font-size:1.5rem;font-weight:bold;color:${ch.isGood ? "#22c55e" : "#ef4444"};`}>
+                <div style={`font-size:1.5rem;font-weight:bold;color:${ch.isGood ? "var(--ib-success)" : "var(--ib-danger)"};`}>
                   {ch.diff > 0 ? "+" : ""}{ch.diff}{ch.unit}
                 </div>
                 <div style="font-size:0.85rem;opacity:0.7;margin-top:0.25rem;">{ch.label}</div>
@@ -752,13 +755,15 @@ reports.get("/report/:id/success", (c) => {
             共 {totalPredicted} 人 · 預測體脂率 {myPrediction.predictedFatPct}%
           </div>
           {inDanger && (
-            <div style="color:#ef4444;margin-top:0.5rem;font-size:0.9rem;">
-              ⚠️ 小心！你可能需要準備乳清蛋白...
+            <div style="color:var(--ib-danger);margin-top:0.5rem;font-size:0.9rem;display:flex;align-items:center;justify-content:center;gap:0.4rem;">
+              <Icon name="alert-triangle" size={16} color="var(--ib-danger)" />
+              小心！你可能需要準備乳清蛋白...
             </div>
           )}
           {isSafe && (
-            <div style="color:#22c55e;margin-top:0.5rem;font-size:0.9rem;">
-              ✅ 安全區！繼續保持！
+            <div style="color:var(--ib-success);margin-top:0.5rem;font-size:0.9rem;display:flex;align-items:center;justify-content:center;gap:0.4rem;">
+              <Icon name="check-circle" size={16} color="var(--ib-success)" />
+              安全區！繼續保持！
             </div>
           )}
         </div>
@@ -769,7 +774,7 @@ reports.get("/report/:id/success", (c) => {
         <p style="margin-bottom:1rem;font-size:1.1rem;">
           {acceleratorMsg}
         </p>
-        <a href={acceleratorLink} role="button" style="font-size:1.1rem;padding:0.75rem 2rem;">
+        <a href={acceleratorLink} class="btn-primary" style="font-size:1.1rem;padding:0.75rem 2rem;">
           {acceleratorLabel}
         </a>
       </div>

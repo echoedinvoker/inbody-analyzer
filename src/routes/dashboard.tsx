@@ -6,6 +6,7 @@ import { getAdvice } from "../lib/advice.ts";
 import { predictUser, predictAll } from "../lib/predict.ts";
 import { getUserBadges } from "../lib/badges.ts";
 import { Layout } from "../views/layout.tsx";
+import { Icon } from "../views/icons.tsx";
 
 const dashboard = new Hono();
 
@@ -65,11 +66,12 @@ dashboard.get("/dashboard", async (c) => {
     return c.html(
       <Layout title="儀表板" user={user}>
         {/* Hero: empty state */}
-        <div style="text-align:center;padding:3rem 1rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
-          <div style="font-size:3rem;margin-bottom:0.5rem;">📸</div>
+        <div class="ib-card" style="text-align:center;padding:3rem 1rem;">
+          <div style="margin-bottom:0.75rem;"><Icon name="camera" size={48} color="var(--ib-primary)" /></div>
           <h2 style="margin:0 0 0.5rem;">開始你的比賽之旅</h2>
           <p style="opacity:0.7;margin:0 0 1.5rem;">上傳你的第一份 InBody 報告，建立基準數據。</p>
-          <a href="/upload" role="button" style="font-size:1.1rem;padding:0.75rem 2.5rem;">
+          <a href="/upload" class="btn-primary" style="font-size:1.1rem;padding:0.75rem 2.5rem;">
+            <Icon name="upload" size={20} color="#fff" />
             上傳 InBody 報告
           </a>
         </div>
@@ -157,8 +159,9 @@ dashboard.get("/dashboard", async (c) => {
         </div>
         {/* THE oasis: the one thing that stands out */}
         <div class="hero-upload">
-          <a href="/upload" role="button" style="font-size:1.1rem;padding:1rem 1.5rem;white-space:nowrap;display:block;">
-            📸 上傳新報告
+          <a href="/upload" class="btn-primary" style="font-size:1.1rem;padding:1rem 1.5rem;white-space:nowrap;display:block;">
+            <Icon name="upload" size={20} color="#fff" />
+            上傳新報告
           </a>
           <div style="font-size:0.75rem;opacity:0.5;margin-top:0.5rem;">
             <a href="/reports" style="opacity:0.7;">歷史紀錄</a>
@@ -207,8 +210,8 @@ dashboard.get("/dashboard", async (c) => {
             <canvas id="radarChart"></canvas>
           </div>
           {advice && (
-            <div style="margin-bottom:2rem;padding:1.5rem;background:var(--pico-card-background-color);border-radius:8px;">
-              <h3>AI 建議</h3>
+            <div class="ib-card" style="margin-bottom:2rem;padding:1.5rem;">
+              <h3 style="display:flex;align-items:center;gap:0.5rem;"><Icon name="bot" size={22} color="var(--ib-primary)" /> AI 建議</h3>
               <div dangerouslySetInnerHTML={{ __html: markdownToHtml(advice) }} />
             </div>
           )}
@@ -263,28 +266,28 @@ function NextStepSuggestion({
   totalPredicted: number;
 }) {
   // Determine the most relevant next action
-  let icon = "💡";
+  let iconName = "lightbulb";
   let message = "";
   let linkText = "";
   let linkHref = "";
 
   if (!hasGoal) {
-    icon = "🎯";
+    iconName = "target";
     message = "設定你的減脂目標，AI 建議將依照目標量身打造";
     linkText = "設定目標";
     linkHref = "/settings";
   } else if (reportCount < 2) {
-    icon = "📈";
+    iconName = "trending-up";
     message = `再上傳 ${2 - reportCount} 筆即可解鎖趨勢圖和預測功能`;
     linkText = "上傳報告";
     linkHref = "/upload";
   } else if (reportCount < 4) {
-    icon = "🤖";
+    iconName = "bot";
     message = `再 ${4 - reportCount} 筆就能解鎖 AI 個人化建議`;
     linkText = "上傳報告";
     linkHref = "/upload";
   } else if (daysSinceUpload != null && daysSinceUpload >= 7) {
-    icon = "⏰";
+    iconName = "clock";
     message = `距離上次測量已 ${daysSinceUpload} 天，是時候看看最新進展了`;
     linkText = "上傳新報告";
     linkHref = "/upload";
@@ -292,12 +295,12 @@ function NextStepSuggestion({
     const winnerCount = Math.min(3, Math.floor(totalPredicted / 2));
     const loserStart = totalPredicted - winnerCount;
     if (rank > loserStart) {
-      icon = "⚠️";
+      iconName = "alert-triangle";
       message = "你目前在危險區！上傳更多數據可能改變預測結果";
       linkText = "上傳新報告";
       linkHref = "/upload";
     } else {
-      icon = "🏆";
+      iconName = "trophy";
       message = "你在安全區！到排行榜看看其他人的最新狀況";
       linkText = "查看排行榜";
       linkHref = "/leaderboard";
@@ -307,10 +310,10 @@ function NextStepSuggestion({
   }
 
   return (
-    <div style="margin:2rem 0;padding:1rem 1.25rem;border-radius:8px;border:1px solid var(--pico-muted-border-color);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
-      <span style="font-size:1.5rem;">{icon}</span>
-      <span style="flex:1;font-size:0.9rem;">{message}</span>
-      <a href={linkHref} role="button" class="outline" style="white-space:nowrap;font-size:0.85rem;padding:0.4rem 1rem;">
+    <div class="ib-prompt" style="margin:2rem 0;">
+      <span class="ib-prompt-icon"><Icon name={iconName} size={24} /></span>
+      <span class="ib-prompt-text">{message}</span>
+      <a href={linkHref} class="btn-outline" style="white-space:nowrap;">
         {linkText}
       </a>
     </div>
@@ -369,7 +372,7 @@ function DiffSummary({ latest, prev }: { latest: Row; prev: Row | null }) {
               : higherIsGood
                 ? diff > 0
                 : diff < 0;
-          const color = isGood === null ? "" : isGood ? "green" : diff === 0 ? "" : "red";
+          const color = isGood === null ? "" : isGood ? "var(--ib-success)" : diff === 0 ? "" : "var(--ib-danger)";
 
           return (
             <tr>
@@ -445,8 +448,8 @@ function buildChartScript(
       });
     }
 
-    miniTrend('weightChart', '體重 (kg)', data.weight, '#3b82f6', 'kg');
-    miniTrend('muscleChart', '骨骼肌 (kg)', data.skeletalMuscle, '#22c55e', 'kg');
+    miniTrend('weightChart', '體重 (kg)', data.weight, '#f97316', 'kg');
+    miniTrend('muscleChart', '骨骼肌 (kg)', data.skeletalMuscle, '#10b981', 'kg');
     miniTrend('fatMassChart', '體脂肪 (kg)', data.bodyFatMass, '#ef4444', 'kg');
 
     // Body fat % trend with prediction extension
@@ -469,8 +472,8 @@ function buildChartScript(
       {
         label: '體脂率 (%)',
         data: fatActual,
-        borderColor: '#f97316',
-        backgroundColor: 'rgba(249,115,22,0.15)',
+        borderColor: '#f59e0b',
+        backgroundColor: 'rgba(245,158,11,0.15)',
         fill: true,
         tension: 0.3,
       },
@@ -480,9 +483,9 @@ function buildChartScript(
       fatDatasets.push({
         label: '預測趨勢',
         data: fatPredicted,
-        borderColor: '#f97316',
+        borderColor: '#f59e0b',
         borderDash: [6, 4],
-        backgroundColor: 'rgba(249,115,22,0.05)',
+        backgroundColor: 'rgba(245,158,11,0.05)',
         fill: false,
         tension: 0,
         pointStyle: 'triangle',
@@ -495,7 +498,7 @@ function buildChartScript(
       fatDatasets.push({
         label: '目標體脂率',
         data: targetLine,
-        borderColor: '#22c55e',
+        borderColor: '#10b981',
         borderDash: [3, 3],
         backgroundColor: 'transparent',
         fill: false,
@@ -544,15 +547,15 @@ function buildChartScript(
     const radarDatasets = [{
       label: '最新',
       data: keys.map(k => normalize(radarLatest[k], k)),
-      borderColor: '#3b82f6',
-      backgroundColor: 'rgba(59,130,246,0.2)',
+      borderColor: '#f97316',
+      backgroundColor: 'rgba(249,115,22,0.2)',
     }];
     if (radarPrev) {
       radarDatasets.push({
         label: '上次',
         data: keys.map(k => normalize(radarPrev[k], k)),
-        borderColor: '#94a3b8',
-        backgroundColor: 'rgba(148,163,184,0.15)',
+        borderColor: '#a8a29e',
+        backgroundColor: 'rgba(168,162,158,0.15)',
       });
     }
 
@@ -588,14 +591,15 @@ function markdownToHtml(md: string): string {
 
 function LockedBlock({ title, message }: { title: string; message: string }) {
   return (
-    <div style="position:relative;margin-bottom:2rem;padding:2rem 1.5rem;background:var(--pico-card-background-color);border-radius:8px;text-align:center;">
-      <div style="filter:blur(3px);opacity:0.3;pointer-events:none;">
+    <div class="ib-locked" style="margin-bottom:2rem;">
+      <div class="ib-locked-blur" style="padding:2rem 1.5rem;text-align:center;">
         <h3>{title}</h3>
-        <div style="height:80px;background:var(--pico-muted-border-color);border-radius:4px;" />
+        <div style="height:80px;background:var(--ib-border);border-radius:4px;" />
       </div>
-      <div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);width:90%;">
-        <p style="margin:0;font-size:1rem;">🔒 {message}</p>
-        <a href="/upload" style="font-size:0.9rem;">上傳報告</a>
+      <div class="ib-locked-overlay">
+        <Icon name="lock" size={28} color="var(--ib-text-muted)" />
+        <p style="margin:0;font-size:0.95rem;text-align:center;">{message}</p>
+        <a href="/upload" class="btn-outline" style="font-size:0.85rem;">上傳報告</a>
       </div>
     </div>
   );
@@ -605,9 +609,9 @@ function LockedBlock({ title, message }: { title: string; message: string }) {
 
 function BadgeDisplay({ badges }: { badges: { type: string; label: string; earnedAt: string }[] }) {
   return (
-    <div style="margin-bottom:1.5rem;padding:0.75rem 1rem;background:var(--pico-card-background-color);border-radius:8px;">
+    <div style="margin-top:0.75rem;">
       <div style="display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
-        <strong style="font-size:0.85rem;">徽章：</strong>
+        <Icon name="award" size={16} color="var(--ib-primary)" />
         {badges.map((b) => (
           <span
             title={`${b.label.slice(2).trim()} — ${b.earnedAt.slice(0, 10)}`}
@@ -660,7 +664,7 @@ function ActivityFeed({
         {shown.map((a) => {
           const isMe = a.userId === currentUserId;
           return (
-            <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;${isMe ? 'background:rgba(59,130,246,0.06);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem;border-radius:4px;' : ''}`}>
+            <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;${isMe ? 'background:var(--ib-primary-light);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem;border-radius:4px;' : ''}`}>
               <span>
                 <strong>{isMe ? "你" : a.userName}</strong> 上傳了新數據
               </span>
@@ -738,22 +742,22 @@ function CompetitionProgress({
         <strong style="font-size:0.9rem;">{isFinished ? "比賽已結束" : "減脂比賽"}</strong>
         <span style="font-size:0.75rem;opacity:0.6;">剩餘 {remainingDays} 天</span>
       </div>
-      <div style="background:var(--pico-muted-border-color);border-radius:4px;height:0.6rem;overflow:hidden;margin-bottom:0.5rem;">
-        <div style={`background:${isFinished ? '#22c55e' : '#3b82f6'};height:100%;width:${pct}%;border-radius:4px;`} />
+      <div class="ib-progress-track" style="margin-bottom:0.5rem;">
+        <div class="ib-progress-fill" style={`width:${pct}%;${isFinished ? 'background:var(--ib-success);' : ''}`} />
       </div>
 
       {/* Rank and prediction - condensed */}
       {prediction && rank ? (
         <div style="font-size:0.85rem;">
-          <span style={`font-weight:bold;color:${inDanger ? '#ef4444' : isSafe ? '#22c55e' : 'inherit'};`}>
+          <span style={`font-weight:bold;color:${inDanger ? 'var(--ib-danger)' : isSafe ? 'var(--ib-success)' : 'inherit'};`}>
             第 {rank} 名
           </span>
           <span style="opacity:0.6;"> / {totalPredicted} 人</span>
           <span style="opacity:0.5;margin-left:0.5rem;">
             預測 {prediction.predictedFatPct}%
           </span>
-          {inDanger && <span style="color:#ef4444;margin-left:0.5rem;">⚠️</span>}
-          {isSafe && <span style="color:#22c55e;margin-left:0.5rem;">✅</span>}
+          {inDanger && <span style="margin-left:0.5rem;"><Icon name="alert-triangle" size={16} color="var(--ib-danger)" /></span>}
+          {isSafe && <span style="margin-left:0.5rem;"><Icon name="check-circle" size={16} color="var(--ib-success)" /></span>}
         </div>
       ) : (
         <p style="margin:0;font-size:0.8rem;opacity:0.5;">

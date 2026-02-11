@@ -74,7 +74,7 @@ settings.get("/settings", (c) => {
           </label>
         </fieldset>
 
-        <button type="submit">儲存</button>
+        <button type="submit" class="btn-primary">儲存</button>
       </form>
     </Layout>
   );

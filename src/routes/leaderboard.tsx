@@ -5,6 +5,7 @@ import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { predictAll, type Prediction } from "../lib/predict.ts";
 import { getBadgeCount } from "../lib/badges.ts";
 import { Layout } from "../views/layout.tsx";
+import { Icon } from "../views/icons.tsx";
 
 const leaderboard = new Hono();
 
@@ -106,8 +107,8 @@ leaderboard.get("/leaderboard", (c) => {
 
   // Build chart data for group trend
   const colors = [
-    "#3b82f6", "#ef4444", "#22c55e", "#f97316", "#8b5cf6",
-    "#ec4899", "#14b8a6", "#f59e0b", "#6366f1", "#10b981",
+    "#f97316", "#10b981", "#ef4444", "#f59e0b", "#8b5cf6",
+    "#ec4899", "#14b8a6", "#6366f1", "#0ea5e9", "#a8a29e",
   ];
 
   // Find my ranking entry
@@ -120,28 +121,28 @@ leaderboard.get("/leaderboard", (c) => {
 
       {/* My Position Hero Card */}
       {myEntry ? (
-        <div style="text-align:center;padding:1.5rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
+        <div class="ib-card" style="text-align:center;padding:1.5rem;">
           <div style="font-size:0.8rem;opacity:0.5;margin-bottom:0.25rem;">你的{cfg.label.replace("變化", "")}排名</div>
-          <div style={`font-size:3rem;font-weight:bold;color:${myRankIdx < 3 ? '#22c55e' : myRankIdx >= rankings.length - 3 ? '#ef4444' : 'inherit'};`}>
+          <div style={`font-size:3rem;font-weight:bold;color:${myRankIdx < 3 ? 'var(--ib-success)' : myRankIdx >= rankings.length - 3 ? 'var(--ib-danger)' : 'inherit'};`}>
             第 {myRankIdx + 1} 名
           </div>
           <div style="font-size:0.9rem;opacity:0.7;">
             {myEntry.firstVal}{cfg.unit} → {myEntry.lastVal}{cfg.unit}
-            <span style={`margin-left:0.5rem;font-weight:bold;color:${(cfg.lowerIsBetter ? myEntry.diff < 0 : myEntry.diff > 0) ? '#22c55e' : '#ef4444'};`}>
+            <span style={`margin-left:0.5rem;font-weight:bold;color:${(cfg.lowerIsBetter ? myEntry.diff < 0 : myEntry.diff > 0) ? 'var(--ib-success)' : 'var(--ib-danger)'};`}>
               {myEntry.diff > 0 ? "+" : ""}{myEntry.diff.toFixed(1)}{cfg.unit}
             </span>
           </div>
           {myEntry.badgeCount > 0 && (
-            <div style="font-size:0.8rem;opacity:0.5;margin-top:0.25rem;">
-              🏅 {myEntry.badgeCount} 個徽章
+            <div style="font-size:0.8rem;opacity:0.5;margin-top:0.25rem;display:inline-flex;align-items:center;gap:0.3rem;">
+              <Icon name="award" size={14} color="var(--ib-primary)" /> {myEntry.badgeCount} 個徽章
             </div>
           )}
         </div>
       ) : (
-        <div style="text-align:center;padding:1.5rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
-          <div style="font-size:1.5rem;margin-bottom:0.5rem;">📊</div>
+        <div class="ib-card" style="text-align:center;padding:1.5rem;">
+          <div style="margin-bottom:0.5rem;"><Icon name="bar-chart-3" size={32} color="var(--ib-text-muted)" /></div>
           <p style="margin:0 0 0.5rem;opacity:0.7;">需要至少 2 筆數據才能加入排名</p>
-          <a href="/upload" role="button" class="outline" style="font-size:0.9rem;">上傳報告加入排名</a>
+          <a href="/upload" class="btn-outline" style="font-size:0.9rem;">上傳報告加入排名</a>
         </div>
       )}
 
@@ -183,17 +184,17 @@ leaderboard.get("/leaderboard", (c) => {
           <tbody>
             {rankings.map((r, i) => {
               const isGood = cfg.lowerIsBetter ? r.diff < 0 : r.diff > 0;
-              const color = r.diff === 0 ? "" : isGood ? "green" : "red";
+              const color = r.diff === 0 ? "" : isGood ? "var(--ib-success)" : "var(--ib-danger)";
               const arrow = r.diff > 0 ? " ↑" : r.diff < 0 ? " ↓" : " →";
-              const highlight = r.userId === user.id ? "font-weight:bold;background:rgba(59,130,246,0.08);" : "";
+              const highlight = r.userId === user.id ? "font-weight:bold;background:var(--ib-primary-light);" : "";
               return (
                 <tr style={highlight}>
                   <td>{i + 1}</td>
                   <td>
                     {r.name}{r.userId === user.id ? " (你)" : ""}
                     {r.badgeCount > 0 && (
-                      <span title={`${r.badgeCount} 個徽章`} style="margin-left:0.3rem;font-size:0.8rem;opacity:0.7;">
-                        🏅{r.badgeCount}
+                      <span title={`${r.badgeCount} 個徽章`} style="margin-left:0.3rem;font-size:0.8rem;opacity:0.7;display:inline-flex;align-items:center;gap:0.15rem;">
+                        <Icon name="award" size={14} color="var(--ib-primary)" />{r.badgeCount}
                       </span>
                     )}
                   </td>
@@ -266,7 +267,7 @@ function buildGroupChartScript(
   datasets.push({
     label: "團體平均",
     data: avgData,
-    borderColor: "#94a3b8",
+    borderColor: "#a8a29e",
     tension: 0.3,
     spanGaps: true,
     borderDash: [5, 5],
@@ -305,8 +306,8 @@ function WheyPredictor({
 }) {
   if (predictions.length === 0) {
     return (
-      <div style="margin:2rem 0;padding:1.5rem;background:var(--pico-card-background-color);border-radius:8px;">
-        <h3 style="margin-top:0;">🥛 乳清預測器</h3>
+      <div class="ib-card" style="margin:2rem 0;">
+        <h3 style="margin-top:0;display:flex;align-items:center;gap:0.5rem;"><Icon name="milk" size={22} color="var(--ib-primary)" /> 乳清預測器</h3>
         <p style="opacity:0.7;">需要至少 2 筆數據才能預測，快去上傳吧！</p>
       </div>
     );
@@ -318,8 +319,8 @@ function WheyPredictor({
   const loserStart = total - winnerCount;
 
   return (
-    <div style="margin:2rem 0;padding:1.5rem;background:var(--pico-card-background-color);border-radius:8px;">
-      <h3 style="margin-top:0;">🥛 乳清預測器</h3>
+    <div class="ib-card" style="margin:2rem 0;">
+      <h3 style="margin-top:0;display:flex;align-items:center;gap:0.5rem;"><Icon name="milk" size={22} color="var(--ib-primary)" /> 乳清預測器</h3>
       <p style="font-size:0.85rem;opacity:0.7;margin-bottom:1rem;">
         根據目前趨勢預測比賽結束時的體脂率變化，僅供參考。
       </p>
@@ -347,9 +348,10 @@ function WheyPredictor({
                 : "";
             const rowStyle = `${isMe ? "font-weight:bold;" : ""}${bgColor ? `background:${bgColor};` : ""}`;
 
-            let status = "—";
-            if (isWinner) status = "🎁 收到乳清";
-            else if (isLoser) status = "🏋️ 準備乳清";
+            let statusIcon = "";
+            let statusText = "—";
+            if (isWinner) { statusIcon = "gift"; statusText = "收到乳清"; }
+            else if (isLoser) { statusIcon = "dumbbell"; statusText = "準備乳清"; }
 
             return (
               <tr style={rowStyle}>
@@ -358,10 +360,12 @@ function WheyPredictor({
                 <td>{p.firstFatPct}%</td>
                 <td>{p.currentFatPct}%</td>
                 <td>{p.predictedFatPct}%</td>
-                <td style={`color:${p.predictedChange < 0 ? "green" : "red"};font-weight:bold`}>
+                <td style={`color:${p.predictedChange < 0 ? "var(--ib-success)" : "var(--ib-danger)"};font-weight:bold`}>
                   {p.predictedChange > 0 ? "+" : ""}{p.predictedChange}%
                 </td>
-                <td>{status}</td>
+                <td style="white-space:nowrap;">
+                  {statusIcon ? <><Icon name={statusIcon} size={16} color={isWinner ? "var(--ib-success)" : "var(--ib-danger)"} /> {statusText}</> : statusText}
+                </td>
               </tr>
             );
           })}
@@ -377,7 +381,7 @@ function WheyPredictor({
             if (!loser || !winner) return null;
             return (
               <p style="margin:0.25rem 0;">
-                按目前趨勢，<strong>{loser.name}</strong> 需要準備 1kg 乳清蛋白送給 <strong>{winner.name}</strong> 😏
+                按目前趨勢，<strong>{loser.name}</strong> 需要準備 1kg 乳清蛋白送給 <strong>{winner.name}</strong> <Icon name="smile" size={16} />
               </p>
             );
           })}

@@ -74,7 +74,7 @@ history.get("/reports", (c) => {
                     <button
                       type="submit"
                       class="outline"
-                      style="padding:0.2rem 0.5rem;color:red;border-color:red;"
+                      style="padding:0.2rem 0.5rem;color:var(--ib-danger);border-color:var(--ib-danger);"
                     >
                       刪除
                     </button>

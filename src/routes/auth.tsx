@@ -33,13 +33,13 @@ auth.get("/login", (c) => {
             placeholder="顯示名稱（首次登入用）"
           />
         </label>
-        <button type="submit">登入</button>
+        <button type="submit" class="btn-primary" style="width:100%;">登入</button>
       </form>
 
-      <div style="text-align:center;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--pico-muted-border-color);">
+      <div style="text-align:center;margin-top:2rem;padding-top:1.5rem;border-top:1px solid var(--ib-border);">
         <p style="font-size:0.85rem;opacity:0.6;margin-bottom:0.75rem;">沒有邀請碼？</p>
         <form method="post" action="/login/demo">
-          <button type="submit" class="outline" style="width:100%;">
+          <button type="submit" class="btn-outline" style="width:100%;">
             以訪客身份體驗
           </button>
         </form>
@@ -119,7 +119,7 @@ auth.get("/admin/invite", (c) => {
           產生數量
           <input type="number" name="count" value="3" min="1" max="20" />
         </label>
-        <button type="submit">產生</button>
+        <button type="submit" class="btn-primary">產生</button>
       </form>
       <h3>現有邀請碼</h3>
       <table>

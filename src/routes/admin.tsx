@@ -57,7 +57,7 @@ admin.get("/admin", (c) => {
     <Layout title="管理員" user={user}>
       <h2>管理員面板</h2>
       <div style="margin-bottom:1rem;">
-        <a href="/admin/invite" role="button" class="outline">
+        <a href="/admin/invite" class="btn-outline">
           管理邀請碼
         </a>
       </div>
@@ -106,7 +106,7 @@ admin.get("/admin", (c) => {
                       <input type="date" name="start" value={u.competitionStart} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;margin:0;" />
                       <span>~</span>
                       <input type="date" name="end" value={u.competitionEnd ?? ""} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;margin:0;" />
-                      <button type="submit" style="all:unset;cursor:pointer;color:var(--pico-primary);font-size:0.8rem;white-space:nowrap;">儲存</button>
+                      <button type="submit" style="all:unset;cursor:pointer;color:var(--ib-primary);font-size:0.8rem;white-space:nowrap;">儲存</button>
                     </form>
                   </div>
                 ) : "未開始"}
@@ -121,7 +121,7 @@ admin.get("/admin", (c) => {
                   >
                     <button
                       type="submit"
-                      style="all:unset;cursor:pointer;color:#ef4444;font-size:0.8rem;"
+                      style="all:unset;cursor:pointer;color:var(--ib-danger);font-size:0.8rem;"
                     >
                       刪除
                     </button>
