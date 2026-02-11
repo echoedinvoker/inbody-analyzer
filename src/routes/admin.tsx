@@ -95,8 +95,8 @@ admin.get("/admin", (c) => {
               <td>{u.latest?.measuredAt?.slice(0, 10) ?? "—"}</td>
               <td>
                 {u.competitionStart ? (
-                  <details style="margin:0;">
-                    <summary style="cursor:pointer;font-size:0.85rem;list-style:none;">
+                  <details class="inline-edit" style="margin:0;">
+                    <summary style="cursor:pointer;font-size:0.85rem;">
                       {u.competitionStart} ~ {u.competitionEnd ?? "?"}
                     </summary>
                     <form method="post" action={`/admin/user/${u.id}/competition`} style="display:flex;gap:0.25rem;align-items:center;margin:0.5rem 0 0;">

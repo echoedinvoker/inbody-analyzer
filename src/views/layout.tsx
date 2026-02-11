@@ -24,6 +24,9 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
         table { font-size: 0.9rem; }
         .table-wrap { overflow-x: auto; }
         .table-wrap table { white-space: nowrap; }
+        details.inline-edit > summary { list-style: none; }
+        details.inline-edit > summary::-webkit-details-marker { display: none; }
+        details.inline-edit > summary:hover { text-decoration: underline; opacity: 0.8; }
         canvas { max-width: 100%; }
         @media (max-width: 768px) {
           div[style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
