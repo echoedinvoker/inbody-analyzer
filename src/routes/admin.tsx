@@ -188,6 +188,9 @@ admin.post("/admin/user/:id/delete", (c) => {
   // Delete user goals
   db.delete(schema.userGoals).where(eq(schema.userGoals.userId, targetId)).run();
 
+  // Delete badges
+  db.delete(schema.badges).where(eq(schema.badges.userId, targetId)).run();
+
   // Delete sessions
   db.delete(schema.sessions).where(eq(schema.sessions.userId, targetId)).run();
 
