@@ -95,11 +95,11 @@ admin.get("/admin", (c) => {
               <td>{u.latest?.measuredAt?.slice(0, 10) ?? "—"}</td>
               <td>
                 {u.competitionStart ? (
-                  <form method="post" action={`/admin/user/${u.id}/competition`} style="display:flex;gap:0.25rem;align-items:center;">
-                    <input type="date" name="start" value={u.competitionStart} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;" />
+                  <form method="post" action={`/admin/user/${u.id}/competition`} style="display:flex;gap:0.25rem;align-items:center;margin:0;">
+                    <input type="date" name="start" value={u.competitionStart} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;margin:0;" />
                     <span>~</span>
-                    <input type="date" name="end" value={u.competitionEnd ?? ""} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;" />
-                    <button type="submit" class="outline" style="padding:0.15rem 0.4rem;margin:0;font-size:0.75rem;">存</button>
+                    <input type="date" name="end" value={u.competitionEnd ?? ""} style="padding:0.15rem 0.3rem;font-size:0.8rem;width:auto;margin:0;" />
+                    <button type="submit" style="all:unset;cursor:pointer;color:var(--pico-primary);font-size:0.8rem;white-space:nowrap;">儲存</button>
                   </form>
                 ) : "未開始"}
               </td>
@@ -108,13 +108,12 @@ admin.get("/admin", (c) => {
                   <form
                     method="post"
                     action={`/admin/user/${u.id}/delete`}
-                    style="display:inline"
+                    style="display:inline;margin:0;"
                     onsubmit="return confirm('確定刪除此使用者及其所有數據？')"
                   >
                     <button
                       type="submit"
-                      class="outline"
-                      style="padding:0.2rem 0.5rem;color:red;border-color:red;"
+                      style="all:unset;cursor:pointer;color:#ef4444;font-size:0.8rem;"
                     >
                       刪除
                     </button>

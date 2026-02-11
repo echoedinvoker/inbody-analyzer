@@ -45,8 +45,8 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
             <a href="/leaderboard">排行榜</a>
             <a href="/settings">設定</a>
             {user.isAdmin && <a href="/admin">管理</a>}
-            <form method="post" action="/logout" style="display:inline;margin:0;">
-              <button type="submit" class="secondary" style="padding:0;margin:0;width:auto;background:none;border:none;color:var(--pico-primary);font-size:inherit;cursor:pointer;text-decoration:none;">
+            <form method="post" action="/logout" style="display:inline;margin:0;margin-left:0.75rem;">
+              <button type="submit" style="all:unset;color:var(--pico-primary);cursor:pointer;">
                 登出
               </button>
             </form>
