@@ -176,8 +176,14 @@ dashboard.get("/dashboard", async (c) => {
       {unlockTrends ? (
         <div>
           <h3>趨勢圖表</h3>
-          <div style="margin-bottom:2rem;">
-            <canvas id="trendChart" height="100"></canvas>
+          <div style="margin-bottom:1.5rem;">
+            <canvas id="weightChart" height="60"></canvas>
+          </div>
+          <div style="margin-bottom:1.5rem;">
+            <canvas id="muscleChart" height="60"></canvas>
+          </div>
+          <div style="margin-bottom:1.5rem;">
+            <canvas id="fatMassChart" height="60"></canvas>
           </div>
           <div style="margin-bottom:2rem;">
             <canvas id="fatPctChart" height="60"></canvas>
@@ -398,47 +404,46 @@ function buildChartScript(
     const radarPrev = ${JSON.stringify(radarPrev)};
     const prediction = ${JSON.stringify(predictionData)};
 
-    // Trend chart: weight + skeletal muscle + body fat mass
-    new Chart(document.getElementById('trendChart'), {
-      type: 'line',
-      data: {
-        labels: data.labels,
-        datasets: [
-          {
-            label: '體重 (kg)',
-            data: data.weight,
-            borderColor: '#3b82f6',
-            backgroundColor: 'rgba(59,130,246,0.1)',
-            yAxisID: 'y',
+    // Helper: create a single-metric trend chart with tight Y-axis
+    function miniTrend(canvasId, label, values, color, unit) {
+      const nums = values.filter(v => v != null);
+      const min = Math.min(...nums);
+      const max = Math.max(...nums);
+      const padding = Math.max((max - min) * 0.3, 0.5);
+      new Chart(document.getElementById(canvasId), {
+        type: 'line',
+        data: {
+          labels: data.labels,
+          datasets: [{
+            label: label,
+            data: values,
+            borderColor: color,
+            backgroundColor: color + '1a',
+            fill: true,
             tension: 0.3,
-          },
-          {
-            label: '骨骼肌 (kg)',
-            data: data.skeletalMuscle,
-            borderColor: '#22c55e',
-            backgroundColor: 'rgba(34,197,94,0.1)',
-            yAxisID: 'y',
-            tension: 0.3,
-          },
-          {
-            label: '體脂肪 (kg)',
-            data: data.bodyFatMass,
-            borderColor: '#ef4444',
-            backgroundColor: 'rgba(239,68,68,0.1)',
-            yAxisID: 'y',
-            tension: 0.3,
-          },
-        ],
-      },
-      options: {
-        responsive: true,
-        interaction: { mode: 'index', intersect: false },
-        plugins: { title: { display: true, text: '體重 / 骨骼肌 / 體脂肪 趨勢' } },
-        scales: {
-          y: { type: 'linear', position: 'left', title: { display: true, text: 'kg' } },
+            pointRadius: 3,
+          }],
         },
-      },
-    });
+        options: {
+          responsive: true,
+          plugins: {
+            title: { display: true, text: label },
+            legend: { display: false },
+          },
+          scales: {
+            y: {
+              min: Math.floor((min - padding) * 10) / 10,
+              max: Math.ceil((max + padding) * 10) / 10,
+              title: { display: true, text: unit },
+            },
+          },
+        },
+      });
+    }
+
+    miniTrend('weightChart', '體重 (kg)', data.weight, '#3b82f6', 'kg');
+    miniTrend('muscleChart', '骨骼肌 (kg)', data.skeletalMuscle, '#22c55e', 'kg');
+    miniTrend('fatMassChart', '體脂肪 (kg)', data.bodyFatMass, '#ef4444', 'kg');
 
     // Body fat % trend with prediction extension
     const fatLabels = [...data.labels];
