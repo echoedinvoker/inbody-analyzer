@@ -1,10 +1,13 @@
 import type { FC } from "hono/jsx";
+import { raw } from "hono/html";
 
 export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boolean } }> = ({
   title,
   user,
   children,
 }) => (
+  <>
+  {raw('<!DOCTYPE html>')}
   <html lang="zh-TW">
     <head>
       <meta charset="utf-8" />
@@ -58,4 +61,5 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
       <main>{children}</main>
     </body>
   </html>
+  </>
 );
