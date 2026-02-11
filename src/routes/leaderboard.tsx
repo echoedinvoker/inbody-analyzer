@@ -110,9 +110,40 @@ leaderboard.get("/leaderboard", (c) => {
     "#ec4899", "#14b8a6", "#f59e0b", "#6366f1", "#10b981",
   ];
 
+  // Find my ranking entry
+  const myEntry = rankings.find((r) => r.userId === user.id);
+  const myRankIdx = myEntry ? rankings.indexOf(myEntry) : -1;
+
   return c.html(
     <Layout title="排行榜" user={user}>
       <h2>團體排行榜</h2>
+
+      {/* My Position Hero Card */}
+      {myEntry ? (
+        <div style="text-align:center;padding:1.5rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
+          <div style="font-size:0.8rem;opacity:0.5;margin-bottom:0.25rem;">你的{cfg.label.replace("變化", "")}排名</div>
+          <div style={`font-size:3rem;font-weight:bold;color:${myRankIdx < 3 ? '#22c55e' : myRankIdx >= rankings.length - 3 ? '#ef4444' : 'inherit'};`}>
+            第 {myRankIdx + 1} 名
+          </div>
+          <div style="font-size:0.9rem;opacity:0.7;">
+            {myEntry.firstVal}{cfg.unit} → {myEntry.lastVal}{cfg.unit}
+            <span style={`margin-left:0.5rem;font-weight:bold;color:${(cfg.lowerIsBetter ? myEntry.diff < 0 : myEntry.diff > 0) ? '#22c55e' : '#ef4444'};`}>
+              {myEntry.diff > 0 ? "+" : ""}{myEntry.diff.toFixed(1)}{cfg.unit}
+            </span>
+          </div>
+          {myEntry.badgeCount > 0 && (
+            <div style="font-size:0.8rem;opacity:0.5;margin-top:0.25rem;">
+              🏅 {myEntry.badgeCount} 個徽章
+            </div>
+          )}
+        </div>
+      ) : (
+        <div style="text-align:center;padding:1.5rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
+          <div style="font-size:1.5rem;margin-bottom:0.5rem;">📊</div>
+          <p style="margin:0 0 0.5rem;opacity:0.7;">需要至少 2 筆數據才能加入排名</p>
+          <a href="/upload" role="button" class="outline" style="font-size:0.9rem;">上傳報告加入排名</a>
+        </div>
+      )}
 
       {/* Filters */}
       <form method="get" action="/leaderboard" style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;">

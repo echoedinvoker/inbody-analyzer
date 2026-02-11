@@ -1,11 +1,12 @@
 import { Hono } from "hono";
-import { eq } from "drizzle-orm";
+import { eq, asc } from "drizzle-orm";
 import { writeFileSync, mkdirSync, readFileSync } from "fs";
 import convert from "heic-convert";
 import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { extractFromPhoto, type ExtractedData } from "../lib/extract.ts";
 import { checkBadges } from "../lib/badges.ts";
+import { predictUser, predictAll } from "../lib/predict.ts";
 import { Layout } from "../views/layout.tsx";
 
 const DATA_DIR = process.env.DATABASE_PATH
@@ -27,20 +28,76 @@ reports.get("/upload", (c) => {
   const user = c.get("user") as SessionUser | null;
   if (!user) return c.redirect("/login");
 
+  // Get report count for motivation preview
+  const reportCount = db
+    .select({ id: schema.reports.id })
+    .from(schema.reports)
+    .where(eq(schema.reports.userId, user.id))
+    .all()
+    .filter((r) => true).length;
+
+  // Dynamic motivation message based on progress
+  let previewItems: { icon: string; text: string }[] = [];
+  if (reportCount === 0) {
+    previewItems = [
+      { icon: "🎯", text: "開始你的減脂比賽" },
+      { icon: "📊", text: "建立身體組成基準數據" },
+      { icon: "🏅", text: "獲得第一枚徽章" },
+    ];
+  } else if (reportCount === 1) {
+    previewItems = [
+      { icon: "📈", text: "解鎖趨勢圖和預測功能" },
+      { icon: "🔮", text: "查看你的預測排名" },
+      { icon: "🏅", text: "獲得「有跡可循」徽章" },
+    ];
+  } else if (reportCount < 4) {
+    previewItems = [
+      { icon: "🤖", text: `再 ${4 - reportCount} 筆解鎖 AI 個人化建議` },
+      { icon: "🎯", text: "更新你的趨勢預測" },
+      { icon: "📊", text: "更精確的排名預測" },
+    ];
+  } else {
+    previewItems = [
+      { icon: "📊", text: "更新趨勢分析" },
+      { icon: "🔮", text: "刷新排名預測" },
+      { icon: "🤖", text: "獲得最新 AI 建議" },
+    ];
+  }
+
   return c.html(
     <Layout title="上傳報告" user={user}>
-      <h2>上傳 InBody 報告</h2>
-      <form
-        method="post"
-        action="/upload"
-        enctype="multipart/form-data"
-      >
-        <label>
-          選擇照片（JPEG、PNG、HEIC，最大 5MB）
-          <input type="file" name="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required />
-        </label>
-        <button type="submit">上傳並分析</button>
-      </form>
+      <div style="max-width:500px;margin:0 auto;">
+        <h2 style="text-align:center;">上傳 InBody 報告</h2>
+
+        {/* Motivation preview - what uploading gives you */}
+        <div style="margin-bottom:1.5rem;padding:1rem;background:var(--pico-card-background-color);border-radius:8px;">
+          <div style="font-size:0.85rem;opacity:0.6;margin-bottom:0.5rem;">上傳後你將</div>
+          {previewItems.map((item) => (
+            <div style="display:flex;align-items:center;gap:0.5rem;padding:0.3rem 0;font-size:0.9rem;">
+              <span>{item.icon}</span>
+              <span>{item.text}</span>
+            </div>
+          ))}
+        </div>
+
+        {/* Upload form - the desert oasis */}
+        <form
+          method="post"
+          action="/upload"
+          enctype="multipart/form-data"
+        >
+          <label style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
+            <div style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
+            <div style="font-size:0.9rem;">選擇照片或拖放到此處</div>
+            <div style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">JPEG、PNG、HEIC，最大 5MB</div>
+            <input type="file" name="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required
+              style="display:none;" />
+          </label>
+          <button type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;">
+            上傳並分析
+          </button>
+        </form>
+      </div>
     </Layout>
   );
 });
@@ -198,7 +255,7 @@ reports.get("/report/:id/confirm", (c) => {
   return c.html(
     <Layout title="確認數據" user={user}>
       <h2>確認 InBody 數據</h2>
-      <p>請核對以下 AI 提取的數據，如有錯誤可直接修改，確認後儲存。</p>
+      <p style="font-size:0.9rem;opacity:0.7;">核對 AI 提取的數據，如有錯誤可直接修改。</p>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:2rem;">
         {/* Left: photo */}
         <div>
@@ -222,114 +279,63 @@ reports.get("/report/:id/confirm", (c) => {
               />
             </label>
 
+            {/* Core metrics - prominent, always visible */}
             <fieldset>
-              <legend>基本指標</legend>
-              <NumField label="體重 (kg)" name="weight" value={data.weight} />
-              <NumField
-                label="骨骼肌重 (kg)"
-                name="skeletal_muscle"
-                value={data.skeletal_muscle}
-              />
-              <NumField
-                label="體脂肪重 (kg)"
-                name="body_fat_mass"
-                value={data.body_fat_mass}
-              />
-              <NumField
-                label="體脂率 (%)"
-                name="body_fat_pct"
-                value={data.body_fat_pct}
-              />
-              <NumField label="BMI" name="bmi" value={data.bmi} />
-              <NumField
-                label="總體水分 (L)"
-                name="total_body_water"
-                value={data.total_body_water}
-              />
+              <legend><strong>核心指標</strong></legend>
+              <div style="display:grid;grid-template-columns:1fr 1fr;gap:0.5rem;">
+                <NumField label="體重 (kg)" name="weight" value={data.weight} />
+                <NumField label="骨骼肌 (kg)" name="skeletal_muscle" value={data.skeletal_muscle} />
+                <NumField label="體脂肪 (kg)" name="body_fat_mass" value={data.body_fat_mass} />
+                <NumField label="體脂率 (%)" name="body_fat_pct" value={data.body_fat_pct} />
+              </div>
             </fieldset>
 
-            <fieldset>
-              <legend>進階指標</legend>
-              <NumField
-                label="內臟脂肪等級"
-                name="visceral_fat_level"
-                value={data.visceral_fat_level}
-              />
-              <NumField
-                label="基礎代謝率 (kcal)"
-                name="basal_metabolic_rate"
-                value={data.basal_metabolic_rate}
-              />
-              <NumField
-                label="InBody 分數"
-                name="inbody_score"
-                value={data.inbody_score}
-              />
-            </fieldset>
-
-            {data.segmental_lean && (
+            {/* Secondary metrics - collapsed */}
+            <details style="margin-bottom:1rem;">
+              <summary style="cursor:pointer;font-size:0.9rem;opacity:0.7;margin-bottom:0.5rem;">
+                其他指標（BMI、基代、InBody 分數等）
+              </summary>
               <fieldset>
-                <legend>節段肌肉 (kg)</legend>
-                <NumField
-                  label="右臂"
-                  name="seg_lean_right_arm"
-                  value={data.segmental_lean.right_arm}
-                />
-                <NumField
-                  label="左臂"
-                  name="seg_lean_left_arm"
-                  value={data.segmental_lean.left_arm}
-                />
-                <NumField
-                  label="軀幹"
-                  name="seg_lean_trunk"
-                  value={data.segmental_lean.trunk}
-                />
-                <NumField
-                  label="右腿"
-                  name="seg_lean_right_leg"
-                  value={data.segmental_lean.right_leg}
-                />
-                <NumField
-                  label="左腿"
-                  name="seg_lean_left_leg"
-                  value={data.segmental_lean.left_leg}
-                />
+                <NumField label="BMI" name="bmi" value={data.bmi} />
+                <NumField label="總體水分 (L)" name="total_body_water" value={data.total_body_water} />
+                <NumField label="內臟脂肪等級" name="visceral_fat_level" value={data.visceral_fat_level} />
+                <NumField label="基礎代謝率 (kcal)" name="basal_metabolic_rate" value={data.basal_metabolic_rate} />
+                <NumField label="InBody 分數" name="inbody_score" value={data.inbody_score} />
               </fieldset>
+            </details>
+
+            {/* Segmental data - collapsed */}
+            {(data.segmental_lean || data.segmental_fat) && (
+              <details style="margin-bottom:1rem;">
+                <summary style="cursor:pointer;font-size:0.9rem;opacity:0.7;margin-bottom:0.5rem;">
+                  節段分析
+                </summary>
+                {data.segmental_lean && (
+                  <fieldset>
+                    <legend>節段肌肉 (kg)</legend>
+                    <NumField label="右臂" name="seg_lean_right_arm" value={data.segmental_lean.right_arm} />
+                    <NumField label="左臂" name="seg_lean_left_arm" value={data.segmental_lean.left_arm} />
+                    <NumField label="軀幹" name="seg_lean_trunk" value={data.segmental_lean.trunk} />
+                    <NumField label="右腿" name="seg_lean_right_leg" value={data.segmental_lean.right_leg} />
+                    <NumField label="左腿" name="seg_lean_left_leg" value={data.segmental_lean.left_leg} />
+                  </fieldset>
+                )}
+                {data.segmental_fat && (
+                  <fieldset>
+                    <legend>節段脂肪 (%)</legend>
+                    <NumField label="右臂" name="seg_fat_right_arm" value={data.segmental_fat.right_arm} />
+                    <NumField label="左臂" name="seg_fat_left_arm" value={data.segmental_fat.left_arm} />
+                    <NumField label="軀幹" name="seg_fat_trunk" value={data.segmental_fat.trunk} />
+                    <NumField label="右腿" name="seg_fat_right_leg" value={data.segmental_fat.right_leg} />
+                    <NumField label="左腿" name="seg_fat_left_leg" value={data.segmental_fat.left_leg} />
+                  </fieldset>
+                )}
+              </details>
             )}
 
-            {data.segmental_fat && (
-              <fieldset>
-                <legend>節段脂肪 (%)</legend>
-                <NumField
-                  label="右臂"
-                  name="seg_fat_right_arm"
-                  value={data.segmental_fat.right_arm}
-                />
-                <NumField
-                  label="左臂"
-                  name="seg_fat_left_arm"
-                  value={data.segmental_fat.left_arm}
-                />
-                <NumField
-                  label="軀幹"
-                  name="seg_fat_trunk"
-                  value={data.segmental_fat.trunk}
-                />
-                <NumField
-                  label="右腿"
-                  name="seg_fat_right_leg"
-                  value={data.segmental_fat.right_leg}
-                />
-                <NumField
-                  label="左腿"
-                  name="seg_fat_left_leg"
-                  value={data.segmental_fat.left_leg}
-                />
-              </fieldset>
-            )}
-
-            <button type="submit">確認儲存</button>
+            <button type="submit" style="width:100%;font-size:1.05rem;padding:0.75rem;">
+              確認並查看你的進步 →
+            </button>
           </form>
         </div>
       </div>
@@ -423,12 +429,11 @@ reports.post("/report/:id/confirm", async (c) => {
 
   // Check and award badges
   const newBadges = checkBadges(user.id);
-  if (newBadges.length > 0) {
-    const badgeNames = newBadges.map((b) => b.label).join("、");
-    return c.redirect(`/dashboard?badges=${encodeURIComponent(badgeNames)}`);
-  }
+  const badgeParam = newBadges.length > 0
+    ? `?badges=${encodeURIComponent(newBadges.map((b) => b.label).join("、"))}`
+    : "";
 
-  return c.redirect("/dashboard");
+  return c.redirect(`/report/${reportId}/success${badgeParam}`);
 });
 
 // Serve photos
@@ -449,6 +454,224 @@ reports.get("/photos/:filename", (c) => {
   } catch {
     return c.text("Not found", 404);
   }
+});
+
+// --- Win State Success Page ---
+
+reports.get("/report/:id/success", (c) => {
+  const user = requireAuth(c);
+  const reportId = Number(c.req.param("id"));
+  const badgeFlash = c.req.query("badges") || null;
+
+  // Verify ownership
+  const report = db
+    .select()
+    .from(schema.reports)
+    .where(eq(schema.reports.id, reportId))
+    .get();
+  if (!report || report.userId !== user.id) return c.redirect("/dashboard");
+
+  // Get current measurement
+  const current = db
+    .select()
+    .from(schema.measurements)
+    .where(eq(schema.measurements.reportId, reportId))
+    .get();
+
+  // Get all measurements to find previous
+  const allMeasurements = db
+    .select({
+      reportId: schema.measurements.reportId,
+      weight: schema.measurements.weight,
+      skeletalMuscle: schema.measurements.skeletalMuscle,
+      bodyFatPct: schema.measurements.bodyFatPct,
+      bodyFatMass: schema.measurements.bodyFatMass,
+      inbodyScore: schema.measurements.inbodyScore,
+    })
+    .from(schema.measurements)
+    .innerJoin(schema.reports, eq(schema.measurements.reportId, schema.reports.id))
+    .where(eq(schema.reports.userId, user.id))
+    .orderBy(asc(schema.reports.measuredAt))
+    .all();
+
+  const reportCount = allMeasurements.length;
+  const currentIdx = allMeasurements.findIndex((m) => m.reportId === reportId);
+  const prev = currentIdx > 0 ? allMeasurements[currentIdx - 1]! : null;
+
+  // Prediction
+  const myPrediction = predictUser(user.id);
+  const allPredictions = predictAll();
+  const myRank = myPrediction
+    ? allPredictions.findIndex((p) => p.userId === user.id) + 1
+    : null;
+  const totalPredicted = allPredictions.length;
+
+  // Build change items
+  type ChangeItem = { label: string; diff: number; unit: string; isGood: boolean };
+  const changes: ChangeItem[] = [];
+  if (current && prev) {
+    const items: { key: string; label: string; unit: string; lowerIsGood: boolean }[] = [
+      { key: "bodyFatPct", label: "體脂率", unit: "%", lowerIsGood: true },
+      { key: "skeletalMuscle", label: "骨骼肌", unit: "kg", lowerIsGood: false },
+      { key: "weight", label: "體重", unit: "kg", lowerIsGood: true },
+      { key: "bodyFatMass", label: "體脂肪", unit: "kg", lowerIsGood: true },
+    ];
+    for (const item of items) {
+      const cur = (current as any)[item.key] as number | null;
+      const pre = (prev as any)[item.key] as number | null;
+      if (cur != null && pre != null) {
+        const diff = Math.round((cur - pre) * 10) / 10;
+        if (diff !== 0) {
+          changes.push({
+            label: item.label,
+            diff,
+            unit: item.unit,
+            isGood: item.lowerIsGood ? diff < 0 : diff > 0,
+          });
+        }
+      }
+    }
+  }
+
+  // Determine accelerator message based on report count
+  let acceleratorMsg = "";
+  let acceleratorLink = "/upload";
+  let acceleratorLabel = "";
+  if (reportCount === 1) {
+    acceleratorMsg = "再上傳 1 筆即可解鎖趨勢預測！";
+    acceleratorLabel = "繼續上傳";
+  } else if (reportCount < 4) {
+    acceleratorMsg = `再 ${4 - reportCount} 筆就能解鎖 AI 深度分析`;
+    acceleratorLabel = "繼續上傳";
+  } else {
+    acceleratorMsg = "查看你的完整分析報告";
+    acceleratorLink = "/dashboard";
+    acceleratorLabel = "查看儀表板";
+  }
+
+  const winnerCount = Math.min(3, Math.floor(totalPredicted / 2));
+  const loserStart = totalPredicted - winnerCount;
+  const inDanger = myRank != null && myRank > loserStart;
+  const isSafe = myRank != null && myRank <= winnerCount;
+
+  return c.html(
+    <Layout title="數據已記錄！" user={user}>
+      <style>{`
+        @keyframes badge-pop {
+          0% { transform: scale(0); opacity: 0; }
+          60% { transform: scale(1.3); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes glow-pulse {
+          0%, 100% { box-shadow: 0 0 8px rgba(250,204,21,0.4); }
+          50% { box-shadow: 0 0 20px rgba(250,204,21,0.8); }
+        }
+        @keyframes slide-up {
+          from { transform: translateY(20px); opacity: 0; }
+          to { transform: translateY(0); opacity: 1; }
+        }
+        .win-badge {
+          display: inline-flex; align-items: center; gap: 0.5rem;
+          padding: 0.5rem 1rem; border-radius: 999px;
+          background: linear-gradient(135deg, #fef3c7, #fde68a);
+          border: 2px solid #f59e0b;
+          animation: badge-pop 0.5s ease-out, glow-pulse 2s ease-in-out infinite;
+          font-weight: bold; font-size: 1.1rem;
+        }
+        .change-card {
+          animation: slide-up 0.4s ease-out both;
+          padding: 1rem; border-radius: 8px; text-align: center;
+          background: var(--pico-card-background-color);
+        }
+        .change-good { border-left: 4px solid #22c55e; }
+        .change-bad { border-left: 4px solid #ef4444; }
+        .win-hero { text-align: center; padding: 2rem 1rem; }
+        .win-section { animation: slide-up 0.4s ease-out both; margin-bottom: 1.5rem; }
+      `}</style>
+
+      <div class="win-hero">
+        <div style="font-size:3rem;margin-bottom:0.5rem;">🎉</div>
+        <h1 style="margin:0 0 0.5rem;">數據已記錄！</h1>
+        <p style="opacity:0.7;margin:0;">
+          第 {reportCount} 筆數據 · {report.measuredAt?.slice(0, 10)}
+        </p>
+      </div>
+
+      {/* Change summary */}
+      {changes.length > 0 && (
+        <div class="win-section" style="animation-delay:0.1s;">
+          <h3 style="text-align:center;margin-bottom:1rem;">vs 上次測量</h3>
+          <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:0.75rem;">
+            {changes.map((ch, i) => (
+              <div class={`change-card ${ch.isGood ? "change-good" : "change-bad"}`}
+                   style={`animation-delay:${0.15 + i * 0.1}s;`}>
+                <div style={`font-size:1.5rem;font-weight:bold;color:${ch.isGood ? "#22c55e" : "#ef4444"};`}>
+                  {ch.diff > 0 ? "+" : ""}{ch.diff}{ch.unit}
+                </div>
+                <div style="font-size:0.85rem;opacity:0.7;margin-top:0.25rem;">{ch.label}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Badges earned */}
+      {badgeFlash && (
+        <div class="win-section" style="text-align:center;animation-delay:0.3s;">
+          <h3 style="margin-bottom:1rem;">解鎖徽章！</h3>
+          <div style="display:flex;justify-content:center;gap:1rem;flex-wrap:wrap;">
+            {badgeFlash.split("、").map((badge, i) => (
+              <div class="win-badge" style={`animation-delay:${0.4 + i * 0.2}s;`}>
+                {badge}
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Rank preview */}
+      {myPrediction && myRank && (
+        <div class="win-section" style={`text-align:center;padding:1rem;border-radius:8px;background:${inDanger ? 'rgba(239,68,68,0.08)' : isSafe ? 'rgba(34,197,94,0.08)' : 'var(--pico-card-background-color)'};animation-delay:0.4s;`}>
+          <div style="font-size:0.85rem;opacity:0.7;">目前預測排名</div>
+          <div style="font-size:2.5rem;font-weight:bold;">
+            第 {myRank} 名
+          </div>
+          <div style="font-size:0.9rem;opacity:0.7;">
+            共 {totalPredicted} 人 · 預測體脂率 {myPrediction.predictedFatPct}%
+          </div>
+          {inDanger && (
+            <div style="color:#ef4444;margin-top:0.5rem;font-size:0.9rem;">
+              ⚠️ 小心！你可能需要準備乳清蛋白...
+            </div>
+          )}
+          {isSafe && (
+            <div style="color:#22c55e;margin-top:0.5rem;font-size:0.9rem;">
+              ✅ 安全區！繼續保持！
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Accelerator CTA - the game loop "green arrow" */}
+      <div class="win-section" style="text-align:center;animation-delay:0.5s;margin-top:2rem;">
+        <p style="margin-bottom:1rem;font-size:1.1rem;">
+          {acceleratorMsg}
+        </p>
+        <a href={acceleratorLink} role="button" style="font-size:1.1rem;padding:0.75rem 2rem;">
+          {acceleratorLabel}
+        </a>
+      </div>
+
+      {/* Secondary options */}
+      <div style="text-align:center;margin-top:1rem;font-size:0.9rem;opacity:0.6;">
+        <a href="/dashboard">儀表板</a>
+        {" · "}
+        <a href="/leaderboard">排行榜</a>
+        {" · "}
+        <a href="/reports">歷史紀錄</a>
+      </div>
+    </Layout>
+  );
 });
 
 // Helper component

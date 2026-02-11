@@ -34,9 +34,6 @@ dashboard.get("/dashboard", async (c) => {
     : null;
   const totalPredicted = allPredictions.length;
 
-  // Badge flash message
-  const badgeFlash = c.req.query("badges") || null;
-
   // Get user's badges
   const myBadges = getUserBadges(user.id);
 
@@ -64,17 +61,16 @@ dashboard.get("/dashboard", async (c) => {
   if (rows.length === 0) {
     return c.html(
       <Layout title="儀表板" user={user}>
-        {badgeFlash && (
-          <div class="flash flash-success" style="margin-bottom:1rem;">
-            🎉 恭喜解鎖徽章：{badgeFlash}！
-          </div>
-        )}
-        <CompetitionProgress user={user} prediction={myPrediction} rank={myRank} totalPredicted={totalPredicted} />
-        {myBadges.length > 0 && <BadgeDisplay badges={myBadges} />}
-        <ActivityFeed activities={recentActivity} currentUserId={user.id} />
-        <h2>尚未上傳報告</h2>
-        <p>上傳你的第一份 InBody 報告來開始追蹤。</p>
-        <a href="/upload" role="button">上傳 InBody 報告</a>
+        {/* Hero: empty state */}
+        <div style="text-align:center;padding:3rem 1rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
+          <div style="font-size:3rem;margin-bottom:0.5rem;">📸</div>
+          <h2 style="margin:0 0 0.5rem;">開始你的比賽之旅</h2>
+          <p style="opacity:0.7;margin:0 0 1.5rem;">上傳你的第一份 InBody 報告，建立基準數據。</p>
+          <a href="/upload" role="button" style="font-size:1.1rem;padding:0.75rem 2.5rem;">
+            上傳 InBody 報告
+          </a>
+        </div>
+        <ActivityFeed activities={recentActivity} currentUserId={user.id} collapsed={true} />
       </Layout>
     );
   }
@@ -142,38 +138,39 @@ dashboard.get("/dashboard", async (c) => {
     }
   }
 
+  // Calculate last upload time for game loop accelerator
+  const lastUploadDate = rows[rows.length - 1]?.measuredAt;
+  const daysSinceUpload = lastUploadDate
+    ? Math.floor((Date.now() - new Date(lastUploadDate).getTime()) / (1000 * 60 * 60 * 24))
+    : null;
+
   return c.html(
     <Layout title="儀表板" user={user}>
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
-        <h2 style="margin:0;">個人儀表板</h2>
+      {/* Hero section: competition status + prominent upload CTA (Desert Oasis) */}
+      <div style="display:grid;grid-template-columns:1fr auto;gap:1.5rem;align-items:center;padding:1.25rem;background:var(--pico-card-background-color);border-radius:12px;margin-bottom:1.5rem;">
         <div>
-          <a href="/upload" role="button" class="outline" style="margin-right:0.5rem;">
-            上傳報告
+          <CompetitionProgress user={user} prediction={myPrediction} rank={myRank} totalPredicted={totalPredicted} />
+          {myBadges.length > 0 && <BadgeDisplay badges={myBadges} />}
+        </div>
+        {/* THE oasis: the one thing that stands out */}
+        <div style="text-align:center;">
+          <a href="/upload" role="button" style="font-size:1.1rem;padding:1rem 1.5rem;white-space:nowrap;display:block;">
+            📸 上傳新報告
           </a>
-          <a href="/reports" role="button" class="outline">
-            歷史紀錄
-          </a>
+          <div style="font-size:0.75rem;opacity:0.5;margin-top:0.5rem;">
+            <a href="/reports" style="opacity:0.7;">歷史紀錄</a>
+          </div>
         </div>
       </div>
 
-      {/* Badge flash */}
-      {badgeFlash && (
-        <div class="flash flash-success" style="margin-bottom:1rem;">
-          🎉 恭喜解鎖徽章：{badgeFlash}！
-        </div>
-      )}
+      {/* Activity feed - collapsed by default */}
+      <ActivityFeed activities={recentActivity} currentUserId={user.id} collapsed={true} />
 
-      {/* Competition progress */}
-      <CompetitionProgress user={user} prediction={myPrediction} rank={myRank} totalPredicted={totalPredicted} />
-
-      {/* Badges */}
-      {myBadges.length > 0 && <BadgeDisplay badges={myBadges} />}
-
-      {/* Activity feed */}
-      <ActivityFeed activities={recentActivity} currentUserId={user.id} />
-
-      {/* Diff summary - always show with data */}
-      <DiffSummary latest={latest} prev={prev} />
+      {/* Diff summary */}
+      <div style="margin-bottom:1.5rem;">
+        <h3 style="font-size:1rem;margin-bottom:0.5rem;opacity:0.8;">最新數據</h3>
+        <DiffSummary latest={latest} prev={prev} />
+      </div>
 
       {/* Trend charts - unlock at 2 reports */}
       {unlockTrends ? (
@@ -214,6 +211,16 @@ dashboard.get("/dashboard", async (c) => {
         />
       ) : null}
 
+      {/* Game Loop Accelerator: "next step" suggestion */}
+      <NextStepSuggestion
+        reportCount={reportCount}
+        daysSinceUpload={daysSinceUpload}
+        hasGoal={!!userGoals}
+        prediction={myPrediction}
+        rank={myRank}
+        totalPredicted={totalPredicted}
+      />
+
       {/* Chart.js scripts - only load if needed */}
       {unlockTrends && (
         <div>
@@ -228,6 +235,78 @@ dashboard.get("/dashboard", async (c) => {
     </Layout>
   );
 });
+
+// --- Next Step Suggestion (Game Loop Accelerator) ---
+
+function NextStepSuggestion({
+  reportCount,
+  daysSinceUpload,
+  hasGoal,
+  prediction,
+  rank,
+  totalPredicted,
+}: {
+  reportCount: number;
+  daysSinceUpload: number | null;
+  hasGoal: boolean;
+  prediction: Prediction | null;
+  rank: number | null;
+  totalPredicted: number;
+}) {
+  // Determine the most relevant next action
+  let icon = "💡";
+  let message = "";
+  let linkText = "";
+  let linkHref = "";
+
+  if (!hasGoal) {
+    icon = "🎯";
+    message = "設定你的減脂目標，AI 建議將依照目標量身打造";
+    linkText = "設定目標";
+    linkHref = "/settings";
+  } else if (reportCount < 2) {
+    icon = "📈";
+    message = `再上傳 ${2 - reportCount} 筆即可解鎖趨勢圖和預測功能`;
+    linkText = "上傳報告";
+    linkHref = "/upload";
+  } else if (reportCount < 4) {
+    icon = "🤖";
+    message = `再 ${4 - reportCount} 筆就能解鎖 AI 個人化建議`;
+    linkText = "上傳報告";
+    linkHref = "/upload";
+  } else if (daysSinceUpload != null && daysSinceUpload >= 7) {
+    icon = "⏰";
+    message = `距離上次測量已 ${daysSinceUpload} 天，是時候看看最新進展了`;
+    linkText = "上傳新報告";
+    linkHref = "/upload";
+  } else if (rank != null && totalPredicted > 0) {
+    const winnerCount = Math.min(3, Math.floor(totalPredicted / 2));
+    const loserStart = totalPredicted - winnerCount;
+    if (rank > loserStart) {
+      icon = "⚠️";
+      message = "你目前在危險區！上傳更多數據可能改變預測結果";
+      linkText = "上傳新報告";
+      linkHref = "/upload";
+    } else {
+      icon = "🏆";
+      message = "你在安全區！到排行榜看看其他人的最新狀況";
+      linkText = "查看排行榜";
+      linkHref = "/leaderboard";
+    }
+  } else {
+    return null; // No suggestion needed
+  }
+
+  return (
+    <div style="margin:2rem 0;padding:1rem 1.25rem;border-radius:8px;border:1px solid var(--pico-muted-border-color);display:flex;align-items:center;gap:1rem;flex-wrap:wrap;">
+      <span style="font-size:1.5rem;">{icon}</span>
+      <span style="flex:1;font-size:0.9rem;">{message}</span>
+      <a href={linkHref} role="button" class="outline" style="white-space:nowrap;font-size:0.85rem;padding:0.4rem 1rem;">
+        {linkText}
+      </a>
+    </div>
+  );
+}
 
 // --- Diff Summary Component ---
 
@@ -553,29 +632,52 @@ function relativeTime(dateStr: string): string {
 function ActivityFeed({
   activities,
   currentUserId,
+  collapsed,
 }: {
   activities: { userName: string; userId: number; measuredAt: string }[];
   currentUserId: number;
+  collapsed?: boolean;
 }) {
   if (activities.length === 0) return null;
 
+  const shown = collapsed ? activities.slice(0, 3) : activities;
+  const hasMore = collapsed && activities.length > 3;
+
   return (
     <div style="margin-bottom:1.5rem;">
-      <h4 style="margin-bottom:0.5rem;">最近動態</h4>
-      <div style="background:var(--pico-card-background-color);border-radius:8px;padding:0.75rem 1rem;">
-        {activities.map((a) => {
+      <h4 style="margin-bottom:0.5rem;font-size:0.9rem;opacity:0.7;">最近動態</h4>
+      <div style="background:var(--pico-card-background-color);border-radius:8px;padding:0.5rem 0.75rem;font-size:0.9rem;">
+        {shown.map((a) => {
           const isMe = a.userId === currentUserId;
           return (
-            <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.35rem 0;${isMe ? 'background:rgba(59,130,246,0.06);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem;border-radius:4px;' : ''}`}>
+            <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;${isMe ? 'background:rgba(59,130,246,0.06);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem;border-radius:4px;' : ''}`}>
               <span>
-                <strong>{isMe ? "你" : a.userName}</strong> 上傳了新數據！
+                <strong>{isMe ? "你" : a.userName}</strong> 上傳了新數據
               </span>
-              <span style="font-size:0.8rem;opacity:0.6;white-space:nowrap;margin-left:1rem;">
+              <span style="font-size:0.75rem;opacity:0.5;white-space:nowrap;margin-left:1rem;">
                 {relativeTime(a.measuredAt)}
               </span>
             </div>
           );
         })}
+        {hasMore && (
+          <details style="margin-top:0.25rem;">
+            <summary style="font-size:0.8rem;opacity:0.5;cursor:pointer;">更多動態</summary>
+            {activities.slice(3).map((a) => {
+              const isMe = a.userId === currentUserId;
+              return (
+                <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;`}>
+                  <span>
+                    <strong>{isMe ? "你" : a.userName}</strong> 上傳了新數據
+                  </span>
+                  <span style="font-size:0.75rem;opacity:0.5;white-space:nowrap;margin-left:1rem;">
+                    {relativeTime(a.measuredAt)}
+                  </span>
+                </div>
+              );
+            })}
+          </details>
+        )}
       </div>
     </div>
   );
@@ -600,8 +702,8 @@ function CompetitionProgress({
 
   if (!competitionStart || !competitionEnd) {
     return (
-      <div style="padding:1rem;background:var(--pico-card-background-color);border-radius:8px;margin-bottom:1.5rem;text-align:center;">
-        <p style="margin:0;">上傳第一份 InBody 報告開始比賽</p>
+      <div style="margin-bottom:0.5rem;">
+        <p style="margin:0;opacity:0.7;font-size:0.9rem;">上傳第一份報告開始比賽</p>
       </div>
     );
   }
@@ -621,45 +723,32 @@ function CompetitionProgress({
   const isSafe = rank != null && rank <= winnerCount;
 
   return (
-    <div style="padding:1rem;background:var(--pico-card-background-color);border-radius:8px;margin-bottom:1.5rem;">
-      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.5rem;">
-        <strong>{isFinished ? "比賽已結束" : "減脂比賽進行中"}</strong>
-        <span style="font-size:0.85rem;opacity:0.7;">
-          {competitionStart} ~ {competitionEnd}
-        </span>
+    <div style="margin-bottom:0.5rem;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
+        <strong style="font-size:0.9rem;">{isFinished ? "比賽已結束" : "減脂比賽"}</strong>
+        <span style="font-size:0.75rem;opacity:0.6;">剩餘 {remainingDays} 天</span>
       </div>
-      <div style="background:var(--pico-muted-border-color);border-radius:4px;height:1.2rem;overflow:hidden;">
-        <div style={`background:${isFinished ? '#22c55e' : '#3b82f6'};height:100%;width:${pct}%;transition:width 0.3s;border-radius:4px;`} />
-      </div>
-      <div style="display:flex;justify-content:space-between;margin-top:0.35rem;font-size:0.85rem;opacity:0.8;">
-        <span>進度 {pct}%</span>
-        <span>{isFinished ? "已完賽" : `剩餘 ${remainingDays} 天`}</span>
+      <div style="background:var(--pico-muted-border-color);border-radius:4px;height:0.6rem;overflow:hidden;margin-bottom:0.5rem;">
+        <div style={`background:${isFinished ? '#22c55e' : '#3b82f6'};height:100%;width:${pct}%;border-radius:4px;`} />
       </div>
 
-      {/* Prediction summary */}
-      {prediction ? (
-        <div style="margin-top:0.75rem;padding-top:0.75rem;border-top:1px solid var(--pico-muted-border-color);font-size:0.9rem;">
-          <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:0.5rem;">
-            <span>預測最終體脂率：<strong>{prediction.predictedFatPct}%</strong>（變化 {prediction.predictedChange > 0 ? "+" : ""}{prediction.predictedChange}%）</span>
-            {rank && <span>預測排名：<strong>第 {rank} 名</strong>（共 {totalPredicted} 人）</span>}
-          </div>
-          {inDanger && (
-            <p style="margin:0.5rem 0 0;color:#ef4444;">
-              ⚠️ 按目前趨勢，你可能需要準備乳清蛋白...
-            </p>
-          )}
-          {isSafe && (
-            <p style="margin:0.5rem 0 0;color:#22c55e;">
-              目前安全，繼續保持！
-            </p>
-          )}
+      {/* Rank and prediction - condensed */}
+      {prediction && rank ? (
+        <div style="font-size:0.85rem;">
+          <span style={`font-weight:bold;color:${inDanger ? '#ef4444' : isSafe ? '#22c55e' : 'inherit'};`}>
+            第 {rank} 名
+          </span>
+          <span style="opacity:0.6;"> / {totalPredicted} 人</span>
+          <span style="opacity:0.5;margin-left:0.5rem;">
+            預測 {prediction.predictedFatPct}%
+          </span>
+          {inDanger && <span style="color:#ef4444;margin-left:0.5rem;">⚠️</span>}
+          {isSafe && <span style="color:#22c55e;margin-left:0.5rem;">✅</span>}
         </div>
       ) : (
-        competitionStart && (
-          <p style="margin:0.5rem 0 0;font-size:0.85rem;opacity:0.6;">
-            再上傳 1 筆數據即可解鎖趨勢預測
-          </p>
-        )
+        <p style="margin:0;font-size:0.8rem;opacity:0.5;">
+          再上傳 1 筆即可解鎖預測
+        </p>
       )}
     </div>
   );
