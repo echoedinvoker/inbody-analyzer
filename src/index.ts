@@ -10,6 +10,15 @@ import admin from "./routes/admin.tsx";
 
 const app = new Hono();
 
+// Global error handler: catch "unauthorized" and redirect to login
+app.onError((err, c) => {
+  if (err.message === "unauthorized") {
+    return c.redirect("/login");
+  }
+  console.error(err);
+  return c.text("Internal Server Error", 500);
+});
+
 // Global middleware
 app.use("*", sessionMiddleware);
 
