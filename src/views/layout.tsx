@@ -25,6 +25,7 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
         .table-wrap { overflow-x: auto; }
         .table-wrap table { white-space: nowrap; }
         details.inline-edit > summary { list-style: none; display: block; cursor: pointer; }
+        details.inline-edit > summary::after { display: none !important; }
         details.inline-edit > summary::-webkit-details-marker { display: none; }
         details.inline-edit > summary::marker { display: none; content: ""; }
         details.inline-edit > summary:hover { text-decoration: underline; opacity: 0.8; }
