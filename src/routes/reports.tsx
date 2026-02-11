@@ -85,6 +85,7 @@ reports.get("/upload", (c) => {
           method="post"
           action="/upload"
           enctype="multipart/form-data"
+          onsubmit="document.getElementById('submit-btn').disabled=true;document.getElementById('submit-btn').textContent='AI 分析中，請稍候...';document.getElementById('upload-progress').style.display='block';"
         >
           <label id="drop-zone" style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
             <div id="drop-icon" style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
@@ -94,9 +95,12 @@ reports.get("/upload", (c) => {
               style="display:none;"
               onchange="document.getElementById('drop-icon').textContent='✅';document.getElementById('drop-text').textContent=this.files[0].name;document.getElementById('drop-hint').textContent=((this.files[0].size/1024/1024).toFixed(1))+' MB';document.getElementById('drop-zone').style.borderColor='var(--pico-primary)';" />
           </label>
-          <button type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;">
+          <button id="submit-btn" type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;" aria-busy="false">
             上傳並分析
           </button>
+          <div id="upload-progress" style="display:none;text-align:center;margin-top:1rem;font-size:0.9rem;opacity:0.7;">
+            正在上傳照片並用 AI 辨識數據，通常需要 10~20 秒...
+          </div>
         </form>
       </div>
     </Layout>
