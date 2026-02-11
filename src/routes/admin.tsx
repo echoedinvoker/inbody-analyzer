@@ -63,6 +63,7 @@ admin.get("/admin", (c) => {
       </div>
 
       <h3>使用者列表（{users.length} 人）</h3>
+      <div class="table-wrap">
       <table>
         <thead>
           <tr>
@@ -124,6 +125,7 @@ admin.get("/admin", (c) => {
           ))}
         </tbody>
       </table>
+      </div>
     </Layout>
   );
 });

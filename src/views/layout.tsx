@@ -22,6 +22,8 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
         .flash-error { background: #fee; color: #c00; }
         .flash-success { background: #efe; color: #060; }
         table { font-size: 0.9rem; }
+        .table-wrap { overflow-x: auto; }
+        .table-wrap table { white-space: nowrap; }
         canvas { max-width: 100%; }
         @media (max-width: 768px) {
           div[style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
@@ -43,8 +45,8 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
             <a href="/leaderboard">排行榜</a>
             <a href="/settings">設定</a>
             {user.isAdmin && <a href="/admin">管理</a>}
-            <form method="post" action="/logout" style="display:inline">
-              <button type="submit" class="outline" style="padding:0.25rem 0.75rem;margin:0;width:auto">
+            <form method="post" action="/logout" style="display:inline;margin:0;">
+              <button type="submit" class="secondary" style="padding:0;margin:0;width:auto;background:none;border:none;color:var(--pico-primary);font-size:inherit;cursor:pointer;text-decoration:none;">
                 登出
               </button>
             </form>
