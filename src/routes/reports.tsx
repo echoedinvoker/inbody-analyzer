@@ -86,12 +86,13 @@ reports.get("/upload", (c) => {
           action="/upload"
           enctype="multipart/form-data"
         >
-          <label style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
-            <div style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
-            <div style="font-size:0.9rem;">選擇照片或拖放到此處</div>
-            <div style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">JPEG、PNG、HEIC，最大 5MB</div>
+          <label id="drop-zone" style="display:block;padding:2rem;border:2px dashed var(--pico-muted-border-color);border-radius:8px;text-align:center;cursor:pointer;margin-bottom:1rem;">
+            <div id="drop-icon" style="font-size:2rem;margin-bottom:0.5rem;">📷</div>
+            <div id="drop-text" style="font-size:0.9rem;">選擇照片或拖放到此處</div>
+            <div id="drop-hint" style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">JPEG、PNG、HEIC，最大 5MB</div>
             <input type="file" name="photo" accept="image/jpeg,image/png,image/heic,image/heif,.heic,.heif" required
-              style="display:none;" />
+              style="display:none;"
+              onchange="document.getElementById('drop-icon').textContent='✅';document.getElementById('drop-text').textContent=this.files[0].name;document.getElementById('drop-hint').textContent=((this.files[0].size/1024/1024).toFixed(1))+' MB';document.getElementById('drop-zone').style.borderColor='var(--pico-primary)';" />
           </label>
           <button type="submit" style="width:100%;font-size:1.1rem;padding:0.75rem;">
             上傳並分析
