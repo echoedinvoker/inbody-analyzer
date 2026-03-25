@@ -5,8 +5,7 @@ import { requireAuth } from "../lib/session.ts";
 import { getUserBadges } from "../lib/badges.ts";
 import { getStreak } from "../lib/streak.ts";
 import { getNarrative } from "../lib/narrative.ts";
-import { predictUser } from "../lib/predict.ts";
-import { getCompetitionReportCount } from "../lib/competition.ts";
+// predict and competition imports removed — room-scoped versions needed later
 
 const apiDashboard = new Hono();
 
@@ -38,8 +37,8 @@ apiDashboard.get("/api/rooms/:slug/dashboard", async (c) => {
 
   if (!membership) return c.json({ error: "Not a member" }, 403);
 
-  // Get all confirmed measurements for this user
-  const measurements = db
+  // Get confirmed measurements for this user within room date range
+  const allMeasurements = db
     .select({
       reportId: schema.reports.id,
       measuredAt: schema.reports.measuredAt,
@@ -59,17 +58,25 @@ apiDashboard.get("/api/rooms/:slug/dashboard", async (c) => {
     .orderBy(schema.reports.measuredAt)
     .all();
 
+  // Filter to room date range
+  const measurements = allMeasurements.filter((m) => {
+    const date = m.measuredAt?.slice(0, 10) || "";
+    return date >= room.startDate && date <= room.endDate;
+  });
+
   // Room info
   const now = new Date();
   const end = new Date(room.endDate);
   const daysLeft = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
 
-  // Streak, badges, narrative (currently global, will be per-room later)
+  // Use room-scoped report count for feature gating
+  const reportCount = measurements.length;
+
+  // Streak, badges (still global for now — room-scoped later)
   const streak = getStreak(user.id);
   const badges = getUserBadges(user.id);
-  const prediction = predictUser(user.id);
-  const reportCount = getCompetitionReportCount(user.id);
 
+  // Narrative only if enough data in this room's date range
   let narrative: string | null = null;
   if (reportCount >= 2) {
     try {
@@ -117,13 +124,7 @@ apiDashboard.get("/api/rooms/:slug/dashboard", async (c) => {
       earnedAt: b.earnedAt,
     })),
     narrative,
-    prediction: prediction
-      ? {
-          predictedChange: prediction.predictedChange,
-          predictedValue: prediction.predictedValue,
-          metric: prediction.metric,
-        }
-      : null,
+    prediction: null, // TODO: room-scoped prediction
     nextStep: reportCount === 0
       ? { action: "upload", message: "上傳你的第一份 InBody 報告" }
       : reportCount < 2

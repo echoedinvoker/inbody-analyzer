@@ -3,7 +3,6 @@ import { eq, and, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { getBadgeCount } from "../lib/badges.ts";
-import { calculatePeriodMVP } from "../lib/mvp.ts";
 
 const apiLeaderboard = new Hono();
 
@@ -65,11 +64,9 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     )
     .all();
 
-  // Filter by period
-  const days = period === "all" ? 0 : Number(period);
-  const cutoff = days
-    ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
-    : null;
+  // Use room date range as the primary filter (ignore period param for now)
+  const roomStart = room.startDate;
+  const roomEnd = room.endDate;
 
   type RankEntry = {
     userId: number;
@@ -101,9 +98,11 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       .orderBy(schema.reports.measuredAt)
       .all();
 
-    if (cutoff) {
-      rows = rows.filter((r) => (r.measuredAt || "") >= cutoff);
-    }
+    // Filter to room date range
+    rows = rows.filter((r) => {
+      const date = r.measuredAt?.slice(0, 10) || "";
+      return date >= roomStart && date <= roomEnd;
+    });
 
     if (rows.length < 2) continue;
 
@@ -130,8 +129,19 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
   const cfg = METRIC_CONFIG[metric]!;
   rankings.sort((a, b) => (cfg.lowerIsBetter ? a.diff - b.diff : b.diff - a.diff));
 
-  // MVP (currently global, will be per-room later)
-  const mvp = calculatePeriodMVP();
+  // Room-scoped MVP: best single-period improvement among room members
+  const memberIds = new Set(members.map((m) => m.userId));
+  let mvp: { userId: number; name: string; gain: number; metric: string } | null = null;
+  if (rankings.length > 0) {
+    // MVP = the top-ranked person (best change in the selected metric)
+    const top = rankings[0]!;
+    mvp = {
+      userId: top.userId,
+      name: top.name,
+      gain: Number(top.diff.toFixed(1)),
+      metric,
+    };
+  }
 
   return c.json({
     metric,
@@ -149,15 +159,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       count: r.count,
       badgeCount: r.badgeCount,
     })),
-    mvp: mvp
-      ? {
-          userId: mvp.userId,
-          name: mvp.name,
-          gain: mvp.gain,
-          metric: mvp.metric,
-          periodLabel: mvp.periodLabel,
-        }
-      : null,
+    mvp,
   });
 });
 
