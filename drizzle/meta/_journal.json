@@ -36,6 +36,48 @@
       "when": 1770782012977,
       "tag": "0004_calm_sinister_six",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1774318968603,
+      "tag": "0005_confused_silvermane",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1774319368311,
+      "tag": "0006_pale_norrin_radd",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1774319587721,
+      "tag": "0007_steady_speed_demon",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1774321486331,
+      "tag": "0008_greedy_scourge",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1774323729547,
+      "tag": "0009_eminent_morlocks",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1774435037312,
+      "tag": "0010_quick_madelyne_pryor",
+      "breakpoints": true
     }
   ]
 }

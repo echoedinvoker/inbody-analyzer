@@ -1,13 +1,17 @@
 import { createMiddleware } from "hono/factory";
 import { getCookie, setCookie, deleteCookie } from "hono/cookie";
+import { sign, verify } from "hono/jwt";
 import { eq, and, gt } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
+
+const JWT_SECRET = process.env.JWT_SECRET || "dev-secret-change-me";
 
 export type SessionUser = {
   id: number;
   name: string;
   isAdmin: boolean;
   isDemo: boolean;
+  isGhost: boolean;
   goal: string;
   competitionStart: string | null;
   competitionEnd: string | null;
@@ -20,6 +24,37 @@ type Env = {
 };
 
 export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
+  // Try JWT first (for new Nuxt frontend)
+  const authHeader = c.req.header("Authorization");
+  if (authHeader?.startsWith("Bearer ")) {
+    const token = authHeader.slice(7);
+    try {
+      const payload = await verify(token, JWT_SECRET, "HS256") as { sub: number; name: string };
+      const user = db
+        .select()
+        .from(schema.users)
+        .where(eq(schema.users.id, payload.sub))
+        .get();
+
+      if (user) {
+        c.set("user", {
+          id: user.id,
+          name: user.name,
+          isAdmin: user.isAdmin ?? false,
+          isDemo: user.isDemo ?? false,
+          isGhost: user.isGhost ?? false,
+          goal: user.goal ?? "maintain",
+          competitionStart: user.competitionStart ?? null,
+          competitionEnd: user.competitionEnd ?? null,
+        });
+        return next();
+      }
+    } catch {
+      // Invalid JWT, fall through to cookie session
+    }
+  }
+
+  // Fall back to cookie session (for existing SSR frontend)
   const sessionId = getCookie(c, "sid");
   if (!sessionId) {
     c.set("user", null);
@@ -33,6 +68,7 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
       name: schema.users.name,
       isAdmin: schema.users.isAdmin,
       isDemo: schema.users.isDemo,
+      isGhost: schema.users.isGhost,
       goal: schema.users.goal,
       competitionStart: schema.users.competitionStart,
       competitionEnd: schema.users.competitionEnd,
@@ -56,12 +92,22 @@ export const sessionMiddleware = createMiddleware<Env>(async (c, next) => {
     name: row.name,
     isAdmin: row.isAdmin ?? false,
     isDemo: row.isDemo ?? false,
+    isGhost: row.isGhost ?? false,
     goal: row.goal ?? "maintain",
     competitionStart: row.competitionStart ?? null,
     competitionEnd: row.competitionEnd ?? null,
   });
   return next();
 });
+
+// Sign a JWT for a user (30 days expiry)
+export async function signJwt(userId: number, name: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  return sign(
+    { sub: userId, name, iat: now, exp: now + 30 * 24 * 60 * 60 },
+    JWT_SECRET
+  );
+}
 
 export function createSession(c: any, userId: number) {
   const id = crypto.randomUUID();
