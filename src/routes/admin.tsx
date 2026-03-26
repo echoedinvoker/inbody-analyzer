@@ -2,6 +2,9 @@ import { Hono } from "hono";
 import { eq, desc, sql } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
+import { getConfig, getCompetitionMode, getCompetitionStart, getCompetitionEnd, saveConfig } from "../lib/config.ts";
+import { startNewCompetition } from "../lib/competition.ts";
+import { sendMeasurementReminder, sendTestMessage } from "../lib/line-notify.ts";
 import { Layout } from "../views/layout.tsx";
 
 const DATA_DIR = process.env.DATABASE_PATH
@@ -11,8 +14,9 @@ const PHOTO_DIR = `${DATA_DIR}/photos`;
 
 const admin = new Hono();
 
-// Admin guard middleware
+// Admin guard middleware (skip cron endpoints which use API key auth)
 admin.use("/admin/*", async (c, next) => {
+  if (c.req.path.startsWith("/admin/cron/")) return next();
   const user = c.get("user") as SessionUser | null;
   if (!user?.isAdmin) return c.redirect("/");
   return next();
@@ -53,13 +57,47 @@ admin.get("/admin", (c) => {
     };
   });
 
+  const competitionMode = getCompetitionMode();
+  const compStart = getCompetitionStart();
+  const compEnd = getCompetitionEnd();
+  const compHistory = db.select().from(schema.competitionHistory).all();
+
   return c.html(
     <Layout title="管理員" user={user}>
       <h2>管理員面板</h2>
       <div style="margin-bottom:1rem;">
-        <a href="/admin/invite" class="btn-outline">
-          管理邀請碼
-        </a>
+        <a href="/admin/invite" class="btn-outline">管理邀請碼</a>
+      </div>
+
+      {/* Competition Management */}
+      <h3>比賽管理</h3>
+      <div class="ib-card" style="padding:1rem;margin-bottom:1.5rem;">
+        <div style="display:grid;gap:0.5rem;font-size:0.85rem;margin-bottom:1rem;">
+          <div><strong>目前模式：</strong>{competitionMode === "bulk" ? "💪 增肌" : "🔥 減脂"}</div>
+          <div><strong>比賽期間：</strong>{compStart && compEnd ? `${compStart} ~ ${compEnd}` : "未設定"}</div>
+          {compHistory.length > 0 && <div><strong>已完成屆數：</strong>{compHistory.length} 屆</div>}
+        </div>
+
+        <form method="post" action="/admin/start-competition" style="margin:0;" onsubmit="return confirm('確定開始新比賽？當前比賽排名會被快照保存，所有 streak 會重設。');">
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:end;">
+            <label style="flex:1;min-width:100px;margin:0;">
+              <span style="font-size:0.8rem;">模式</span>
+              <select name="mode" style="padding:0.3rem;font-size:0.85rem;margin:0;">
+                <option value="bulk">💪 增肌</option>
+                <option value="cut">🔥 減脂</option>
+              </select>
+            </label>
+            <label style="flex:1;min-width:120px;margin:0;">
+              <span style="font-size:0.8rem;">開始日期</span>
+              <input type="date" name="start" style="padding:0.3rem;font-size:0.85rem;margin:0;" required />
+            </label>
+            <label style="flex:1;min-width:120px;margin:0;">
+              <span style="font-size:0.8rem;">結束日期</span>
+              <input type="date" name="end" style="padding:0.3rem;font-size:0.85rem;margin:0;" required />
+            </label>
+            <button type="submit" style="font-size:0.85rem;padding:0.4rem 1rem;margin:0;white-space:nowrap;">🚀 開始新比賽</button>
+          </div>
+        </form>
       </div>
 
       <h3>使用者列表（{users.length} 人）</h3>
@@ -85,6 +123,7 @@ admin.get("/admin", (c) => {
               <td>
                 {u.name}
                 {u.isAdmin && " (管理員)"}
+                {u.isGhost && " 👻"}
               </td>
               <td>
                 {{ cut: "減脂", bulk: "增肌", maintain: "維持" }[u.goal ?? "maintain"]}
@@ -133,6 +172,33 @@ admin.get("/admin", (c) => {
         </tbody>
       </table>
       </div>
+
+      {/* LINE Integration */}
+      <h3 style="margin-top:2rem;">LINE 群組提醒</h3>
+      <div class="ib-card" style="padding:1rem;">
+        <div style="display:grid;gap:0.5rem;font-size:0.85rem;">
+          <div>
+            <strong>Group ID：</strong>
+            <span style="opacity:0.7;">{getConfig("line_group_id") || "（尚未設定——把 Bot 加入群組後自動取得）"}</span>
+          </div>
+          <div>
+            <strong>Token：</strong>
+            <span style="opacity:0.7;">{process.env.LINE_CHANNEL_ACCESS_TOKEN ? "已設定 ✓" : "未設定"}</span>
+          </div>
+          <div>
+            <strong>Cron Secret：</strong>
+            <code style="font-size:0.8rem;opacity:0.6;">{getConfig("cron_secret") || "—"}</code>
+          </div>
+          <div style="display:flex;gap:0.5rem;margin-top:0.5rem;">
+            <form method="post" action="/admin/line-test" style="margin:0;">
+              <button type="submit" style="font-size:0.85rem;padding:0.3rem 0.8rem;">發送測試訊息</button>
+            </form>
+            <form method="post" action="/admin/line-remind" style="margin:0;">
+              <button type="submit" style="font-size:0.85rem;padding:0.3rem 0.8rem;">立即發送提醒</button>
+            </form>
+          </div>
+        </div>
+      </div>
     </Layout>
   );
 });
@@ -152,6 +218,78 @@ admin.post("/admin/user/:id/competition", async (c) => {
       .set({ competitionStart: start, competitionEnd: end })
       .where(eq(schema.users.id, targetId))
       .run();
+  }
+
+  return c.redirect("/admin");
+});
+
+// LINE test message
+admin.post("/admin/line-test", async (c) => {
+  const user = requireAuth(c);
+  if (!user.isAdmin) return c.redirect("/");
+  try {
+    await sendTestMessage();
+  } catch (e: any) {
+    console.error("LINE test failed:", e.message);
+  }
+  return c.redirect("/admin");
+});
+
+// LINE immediate reminder
+admin.post("/admin/line-remind", async (c) => {
+  const user = requireAuth(c);
+  if (!user.isAdmin) return c.redirect("/");
+  try {
+    await sendMeasurementReminder();
+  } catch (e: any) {
+    console.error("LINE reminder failed:", e.message);
+  }
+  return c.redirect("/admin");
+});
+
+// Cron endpoint for external scheduler (no session auth, uses cron_secret)
+admin.post("/admin/cron/reminder", async (c) => {
+  const secret = c.req.query("secret") || c.req.header("x-cron-secret") || "";
+  const expected = getConfig("cron_secret");
+  if (!expected || secret !== expected) return c.text("Forbidden", 403);
+
+  // Prevent duplicate sends on same day
+  const now = new Date();
+  const utc8 = new Date(now.getTime() + 8 * 60 * 60 * 1000);
+  const today = utc8.toISOString().slice(0, 10);
+  const lastSent = getConfig("last_reminder_date");
+  if (lastSent === today) return c.json({ skipped: true, reason: "already sent today" });
+
+  try {
+    const result = await sendMeasurementReminder();
+    if (result?.sent) {
+      saveConfig("last_reminder_date", today);
+    }
+    return c.json({ sent: result?.sent ?? false, date: today, detail: result?.message });
+  } catch (e: any) {
+    return c.json({ error: e.message }, 500);
+  }
+});
+
+// Start new competition
+admin.post("/admin/start-competition", async (c) => {
+  const user = requireAuth(c);
+  if (!user.isAdmin) return c.redirect("/");
+
+  const body = await c.req.parseBody();
+  const mode = String(body.mode || "").trim();
+  const start = String(body.start || "").trim();
+  const end = String(body.end || "").trim();
+
+  if ((mode === "cut" || mode === "bulk") && start && end) {
+    const snapshot = startNewCompetition("", mode, start, end);
+    // Notify LINE group about ended competition
+    if (snapshot) {
+      const { notifyCompetitionEnd } = await import("../lib/line-notify.ts");
+      notifyCompetitionEnd(snapshot.resultsJson, snapshot.name).catch((e) =>
+        console.error("LINE competition end notify failed:", e.message)
+      );
+    }
   }
 
   return c.redirect("/admin");

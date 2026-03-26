@@ -1,6 +1,6 @@
 import { Hono } from "hono";
 import { eq, desc } from "drizzle-orm";
-import { writeFileSync, mkdirSync } from "fs";
+import { writeFileSync, mkdirSync, readFileSync, unlinkSync } from "fs";
 import convert from "heic-convert";
 import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
@@ -33,9 +33,13 @@ apiReports.get("/api/reports", (c) => {
       measuredAt: schema.reports.measuredAt,
       confirmed: schema.reports.confirmed,
       createdAt: schema.reports.createdAt,
+      photoPath: schema.reports.photoPath,
+      isInbody: schema.reports.isInbody,
+      deviceType: schema.reports.deviceType,
       weight: schema.measurements.weight,
       skeletalMuscle: schema.measurements.skeletalMuscle,
       bodyFatPct: schema.measurements.bodyFatPct,
+      inbodyScore: schema.measurements.inbodyScore,
     })
     .from(schema.reports)
     .leftJoin(schema.measurements, eq(schema.measurements.reportId, schema.reports.id))
@@ -43,7 +47,11 @@ apiReports.get("/api/reports", (c) => {
     .orderBy(desc(schema.reports.measuredAt))
     .all();
 
-  return c.json(rows);
+  return c.json(rows.map((r) => ({
+    ...r,
+    photoUrl: r.photoPath ? `/photos/${r.photoPath}` : null,
+    photoPath: undefined,
+  })));
 });
 
 // POST /api/reports/upload — upload photo, AI extract
@@ -117,6 +125,8 @@ apiReports.post("/api/reports/upload", async (c) => {
       .set({
         rawJson: rawResponse,
         measuredAt: data.measured_at || report.measuredAt,
+        isInbody: data.is_inbody ?? null,
+        deviceType: data.device_type ?? null,
       })
       .where(eq(schema.reports.id, report.id))
       .run();
@@ -270,10 +280,28 @@ apiReports.delete("/api/reports/:id", (c) => {
     return c.json({ error: "Report not found" }, 404);
   }
 
+  // Check if submitted to any room
+  const submissions = db
+    .select()
+    .from(schema.roomSubmissions)
+    .where(eq(schema.roomSubmissions.reportId, reportId))
+    .all();
+
+  if (submissions.length > 0) {
+    return c.json({ error: "此報告已提交到房間，無法刪除" }, 400);
+  }
+
   // Delete measurement first (foreign key)
   db.delete(schema.measurements)
     .where(eq(schema.measurements.reportId, reportId))
     .run();
+
+  // Delete photo file
+  if (report.photoPath) {
+    try {
+      unlinkSync(`${PHOTO_DIR}/${report.photoPath}`);
+    } catch {}
+  }
 
   // Delete report
   db.delete(schema.reports)
@@ -281,6 +309,37 @@ apiReports.delete("/api/reports/:id", (c) => {
     .run();
 
   return c.json({ ok: true });
+});
+
+// GET /api/photos/:filename — serve photo with JWT auth
+apiReports.get("/api/photos/:filename", (c) => {
+  const user = requireAuth(c);
+  const filename = c.req.param("filename");
+
+  if (filename.includes("..") || filename.includes("/")) {
+    return c.json({ error: "Bad request" }, 400);
+  }
+
+  // Verify the photo belongs to this user
+  const report = db
+    .select()
+    .from(schema.reports)
+    .where(eq(schema.reports.photoPath, filename))
+    .get();
+
+  if (!report || report.userId !== user.id) {
+    return c.json({ error: "Not found" }, 404);
+  }
+
+  try {
+    const buffer = readFileSync(`${PHOTO_DIR}/${filename}`);
+    const contentType = filename.endsWith(".png") ? "image/png" : "image/jpeg";
+    return new Response(buffer, {
+      headers: { "Content-Type": contentType, "Cache-Control": "private, max-age=3600" },
+    });
+  } catch {
+    return c.json({ error: "Not found" }, 404);
+  }
 });
 
 export default apiReports;

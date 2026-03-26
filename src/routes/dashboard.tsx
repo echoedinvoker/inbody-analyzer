@@ -5,6 +5,10 @@ import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { getAdvice } from "../lib/advice.ts";
 import { predictUser, predictAll } from "../lib/predict.ts";
 import { getUserBadges } from "../lib/badges.ts";
+import { getCompetitionMode } from "../lib/config.ts";
+import { getCompetitionReportCount, getDisplayName } from "../lib/competition.ts";
+import { getStreak } from "../lib/streak.ts";
+import { getNarrative } from "../lib/narrative.ts";
 import { Layout } from "../views/layout.tsx";
 import { Icon } from "../views/icons.tsx";
 
@@ -13,12 +17,13 @@ const dashboard = new Hono();
 dashboard.get("/dashboard", async (c) => {
   const user = requireAuth(c);
 
-  // Get recent activity across all users (for feed), excluding demo users
+  // Get recent activity across all users (for feed), excluding demo and ghost users
   const recentActivity = db
     .select({
       userName: schema.users.name,
       userId: schema.reports.userId,
       isDemo: schema.users.isDemo,
+      isGhost: schema.users.isGhost,
       measuredAt: schema.reports.measuredAt,
     })
     .from(schema.reports)
@@ -27,12 +32,32 @@ dashboard.get("/dashboard", async (c) => {
     .orderBy(desc(schema.reports.measuredAt))
     .limit(20)
     .all()
-    .filter((a) => !a.isDemo || a.userId === user.id)  // show own demo activity, hide others
+    .filter((a) => {
+      // Hide demo users' activity (except own)
+      if (a.isDemo && a.userId !== user.id) return false;
+      // Hide ghost users' activity (except own; admins see all)
+      if (a.isGhost && a.userId !== user.id && !user.isAdmin) return false;
+      return true;
+    })
     .slice(0, 10);
 
-  // Get prediction for this user
+  // Get prediction for this user, with ghost visibility filter
   const myPrediction = predictUser(user.id);
-  const allPredictions = predictAll();
+  const rawPredictions = predictAll((user as any).isDemo ? user.id : undefined);
+
+  // Ghost visibility: filter predictions to only visible users
+  const visibleUserIds = new Set(
+    db.select({ id: schema.users.id }).from(schema.users).all()
+      .filter((u) => {
+        if (u.isDemo && u.id !== user.id) return false;
+        if (!u.isGhost) return true;
+        if (user.isAdmin) return true;
+        return u.id === user.id;
+      })
+      .map((u) => u.id)
+  );
+  const allPredictions = rawPredictions.filter((p) => visibleUserIds.has(p.userId));
+
   const myRank = myPrediction
     ? allPredictions.findIndex((p) => p.userId === user.id) + 1
     : null;
@@ -120,18 +145,32 @@ dashboard.get("/dashboard", async (c) => {
     .get();
 
   // Prediction data for chart extension
+  const mode = getCompetitionMode();
   const predictionChartData = myPrediction && user.competitionEnd
     ? {
         endDate: user.competitionEnd,
-        predictedFatPct: myPrediction.predictedFatPct,
-        targetFatPct: userGoals?.targetBodyFatPct ?? null,
+        predictedValue: myPrediction.predictedValue,
+        targetValue: mode === "bulk"
+          ? (userGoals?.targetSkeletalMuscle ?? null)
+          : (userGoals?.targetBodyFatPct ?? null),
+        metric: myPrediction.metric,
       }
     : null;
 
-  // Feature unlock tiers based on report count
-  const reportCount = rows.length;
+  // Feature unlock tiers based on competition-scoped report count
+  const reportCount = getCompetitionReportCount(user.id);
   const unlockTrends = reportCount >= 2;
   const unlockFull = reportCount >= 4;
+
+  // Get AI narrative (available at 2+ reports)
+  let narrative: string | null = null;
+  if (unlockTrends) {
+    try {
+      narrative = await getNarrative(user.id);
+    } catch (e: any) {
+      console.error("Narrative generation failed:", e.message);
+    }
+  }
 
   // Get AI advice only if fully unlocked
   let advice: string | null = null;
@@ -142,6 +181,9 @@ dashboard.get("/dashboard", async (c) => {
       console.error("Advice generation failed:", e.message);
     }
   }
+
+  // Get streak info
+  const streakInfo = getStreak(user.id);
 
   // Calculate last upload time for game loop accelerator
   const lastUploadDate = rows[rows.length - 1]?.measuredAt;
@@ -155,6 +197,7 @@ dashboard.get("/dashboard", async (c) => {
       <div class="hero-section">
         <div style="flex:1;min-width:0;">
           <CompetitionProgress user={user} prediction={myPrediction} rank={myRank} totalPredicted={totalPredicted} />
+          <StreakDisplay streak={streakInfo} />
           {myBadges.length > 0 && <BadgeDisplay badges={myBadges} />}
         </div>
         {/* THE oasis: the one thing that stands out */}
@@ -169,6 +212,15 @@ dashboard.get("/dashboard", async (c) => {
         </div>
       </div>
 
+      {/* Narrative card */}
+      {narrative && (
+        <div class="ib-card" style="text-align:center;padding:1.5rem;margin-bottom:1.5rem;background:var(--ib-gradient-primary, linear-gradient(135deg, #f97316, #ea580c));color:#fff;border-radius:12px;">
+          <p style="font-size:1.1rem;margin:0;font-style:italic;">
+            「{narrative}」
+          </p>
+        </div>
+      )}
+
       {/* Activity feed - collapsed by default */}
       <ActivityFeed activities={recentActivity} currentUserId={user.id} collapsed={true} />
 
@@ -182,6 +234,9 @@ dashboard.get("/dashboard", async (c) => {
       {unlockTrends ? (
         <div>
           <h3>趨勢圖表</h3>
+          <div style="margin-bottom:2rem;">
+            <canvas id="compositionChart" height="220"></canvas>
+          </div>
           <div style="margin-bottom:1.5rem;">
             <canvas id="weightChart" height="180"></canvas>
           </div>
@@ -402,7 +457,7 @@ function buildChartScript(
   chartData: any,
   radarLatest: any,
   radarPrev: any | null,
-  predictionData: { endDate: string; predictedFatPct: number; targetFatPct: number | null } | null
+  predictionData: { endDate: string; predictedValue: number; targetValue: number | null; metric: string } | null
 ): string {
   return `
     const data = ${JSON.stringify(chartData)};
@@ -448,44 +503,102 @@ function buildChartScript(
       });
     }
 
+    // Body composition stacked area chart
+    if (data.labels.length >= 2) {
+      const otherData = data.weight.map((w, i) =>
+        w != null && data.skeletalMuscle[i] != null && data.bodyFatMass[i] != null
+          ? Math.round((w - data.skeletalMuscle[i] - data.bodyFatMass[i]) * 10) / 10
+          : null
+      );
+      new Chart(document.getElementById('compositionChart'), {
+        type: 'line',
+        data: {
+          labels: data.labels,
+          datasets: [
+            {
+              label: '骨骼肌',
+              data: data.skeletalMuscle,
+              backgroundColor: '#10b98144',
+              borderColor: '#10b981',
+              fill: 'origin',
+              tension: 0.3,
+            },
+            {
+              label: '體脂肪',
+              data: data.bodyFatMass,
+              backgroundColor: '#ef444444',
+              borderColor: '#ef4444',
+              fill: 'origin',
+              tension: 0.3,
+            },
+            {
+              label: '其他',
+              data: otherData,
+              backgroundColor: '#a8a29e22',
+              borderColor: '#a8a29e',
+              fill: 'origin',
+              tension: 0.3,
+            },
+          ],
+        },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            title: { display: true, text: '身體組成演化' },
+            tooltip: { mode: 'index', intersect: false },
+          },
+          scales: {
+            x: { stacked: true },
+            y: { stacked: true, title: { display: true, text: 'kg' } },
+          },
+        },
+      });
+    }
+
     miniTrend('weightChart', '體重 (kg)', data.weight, '#f97316', 'kg');
     miniTrend('muscleChart', '骨骼肌 (kg)', data.skeletalMuscle, '#10b981', 'kg');
     miniTrend('fatMassChart', '體脂肪 (kg)', data.bodyFatMass, '#ef4444', 'kg');
 
-    // Body fat % trend with prediction extension
-    const fatLabels = [...data.labels];
-    const fatActual = [...data.bodyFatPct];
-    const fatPredicted = new Array(data.labels.length).fill(null);
-    const fatTarget = [];
+    // Competition metric trend with prediction extension
+    // In bulk mode: predict skeletal muscle; in cut mode: predict body fat %
+    const isBulk = prediction && prediction.metric === 'skeletalMuscle';
+    const predChartSource = isBulk ? data.skeletalMuscle : data.bodyFatPct;
+    const predChartLabel = isBulk ? '骨骼肌 (kg)' : '體脂率 (%)';
+    const predChartColor = isBulk ? '#10b981' : '#f59e0b';
+    const predChartUnit = isBulk ? 'kg' : '%';
+    const predChartId = 'fatPctChart'; // keep same canvas ID for compatibility
 
-    if (prediction && data.bodyFatPct.length >= 2) {
-      // Add prediction point: dashed line from last actual to predicted end
+    const trendLabels = [...data.labels];
+    const trendActual = [...predChartSource];
+    const trendPredicted = new Array(data.labels.length).fill(null);
+
+    if (prediction && predChartSource.length >= 2) {
       const endLabel = prediction.endDate.slice(0, 10);
-      fatLabels.push(endLabel);
-      fatActual.push(null);
-      // Prediction line: starts from last actual value, ends at predicted
-      fatPredicted[fatPredicted.length - 1] = data.bodyFatPct[data.bodyFatPct.length - 1];
-      fatPredicted.push(prediction.predictedFatPct);
+      trendLabels.push(endLabel);
+      trendActual.push(null);
+      trendPredicted[trendPredicted.length - 1] = predChartSource[predChartSource.length - 1];
+      trendPredicted.push(prediction.predictedValue);
     }
 
-    const fatDatasets = [
+    const trendDatasets = [
       {
-        label: '體脂率 (%)',
-        data: fatActual,
-        borderColor: '#f59e0b',
-        backgroundColor: 'rgba(245,158,11,0.15)',
+        label: predChartLabel,
+        data: trendActual,
+        borderColor: predChartColor,
+        backgroundColor: predChartColor + '26',
         fill: true,
         tension: 0.3,
       },
     ];
 
-    if (prediction && data.bodyFatPct.length >= 2) {
-      fatDatasets.push({
+    if (prediction && predChartSource.length >= 2) {
+      trendDatasets.push({
         label: '預測趨勢',
-        data: fatPredicted,
-        borderColor: '#f59e0b',
+        data: trendPredicted,
+        borderColor: predChartColor,
         borderDash: [6, 4],
-        backgroundColor: 'rgba(245,158,11,0.05)',
+        backgroundColor: predChartColor + '0d',
         fill: false,
         tension: 0,
         pointStyle: 'triangle',
@@ -493,12 +606,12 @@ function buildChartScript(
       });
     }
 
-    if (prediction && prediction.targetFatPct != null) {
-      const targetLine = fatLabels.map(() => prediction.targetFatPct);
-      fatDatasets.push({
-        label: '目標體脂率',
+    if (prediction && prediction.targetValue != null) {
+      const targetLine = trendLabels.map(() => prediction.targetValue);
+      trendDatasets.push({
+        label: isBulk ? '目標骨骼肌' : '目標體脂率',
         data: targetLine,
-        borderColor: '#10b981',
+        borderColor: isBulk ? '#f59e0b' : '#10b981',
         borderDash: [3, 3],
         backgroundColor: 'transparent',
         fill: false,
@@ -508,18 +621,22 @@ function buildChartScript(
       });
     }
 
-    new Chart(document.getElementById('fatPctChart'), {
+    const trendTitle = isBulk
+      ? (prediction ? '骨骼肌趨勢（含預測）' : '骨骼肌趨勢')
+      : (prediction ? '體脂率趨勢（含預測）' : '體脂率趨勢');
+
+    new Chart(document.getElementById(predChartId), {
       type: 'line',
-      data: { labels: fatLabels, datasets: fatDatasets },
+      data: { labels: trendLabels, datasets: trendDatasets },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          title: { display: true, text: prediction ? '體脂率趨勢（含預測）' : '體脂率趨勢' },
+          title: { display: true, text: trendTitle },
           legend: { position: 'bottom' },
         },
         scales: {
-          y: { title: { display: true, text: '%' } },
+          y: { title: { display: true, text: predChartUnit } },
         },
       },
     });
@@ -666,7 +783,7 @@ function ActivityFeed({
           return (
             <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;${isMe ? 'background:var(--ib-primary-light);margin:0 -0.5rem;padding-left:0.5rem;padding-right:0.5rem;border-radius:4px;' : ''}`}>
               <span>
-                <strong>{isMe ? "你" : a.userName}</strong> 上傳了新數據
+                <strong>{isMe ? "你" : getDisplayName(a.userId, a.userName)}</strong> 上傳了新數據
               </span>
               <span style="font-size:0.75rem;opacity:0.5;white-space:nowrap;margin-left:1rem;">
                 {relativeTime(a.measuredAt)}
@@ -682,7 +799,7 @@ function ActivityFeed({
               return (
                 <div style={`display:flex;justify-content:space-between;align-items:center;padding:0.3rem 0;`}>
                   <span>
-                    <strong>{isMe ? "你" : a.userName}</strong> 上傳了新數據
+                    <strong>{isMe ? "你" : getDisplayName(a.userId, a.userName)}</strong> 上傳了新數據
                   </span>
                   <span style="font-size:0.75rem;opacity:0.5;white-space:nowrap;margin-left:1rem;">
                     {relativeTime(a.measuredAt)}
@@ -693,6 +810,36 @@ function ActivityFeed({
           </details>
         )}
       </div>
+    </div>
+  );
+}
+
+// --- Streak Display Component ---
+
+import type { StreakInfo } from "../lib/streak.ts";
+
+function StreakDisplay({ streak }: { streak: StreakInfo }) {
+  if (!streak.deadline) return null; // No streak data yet
+
+  const urgent = streak.daysRemaining != null && streak.daysRemaining <= 3 && !streak.isExpired;
+
+  return (
+    <div style="font-size:0.85rem;margin-bottom:0.3rem;display:flex;align-items:center;gap:0.5rem;flex-wrap:wrap;">
+      {streak.isExpired ? (
+        <span style="opacity:0.5;">連勝中斷 · 重新開始吧</span>
+      ) : (
+        <>
+          <span>{streak.currentStreak > 0 ? "🔥" : "⬜"} 連續 {streak.currentStreak} 期</span>
+          {streak.bestStreak > streak.currentStreak && (
+            <span style="opacity:0.5;">最佳 {streak.bestStreak} 期</span>
+          )}
+          {streak.deadline && (
+            <span style={`font-size:0.8rem;${urgent ? "color:var(--ib-danger);font-weight:bold;animation:ib-blink 1s infinite;" : "opacity:0.5;"}`}>
+              期限 {streak.deadline}（剩 {streak.daysRemaining} 天）
+            </span>
+          )}
+        </>
+      )}
     </div>
   );
 }
@@ -739,7 +886,7 @@ function CompetitionProgress({
   return (
     <div style="margin-bottom:0.5rem;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.4rem;">
-        <strong style="font-size:0.9rem;">{isFinished ? "比賽已結束" : "減脂比賽"}</strong>
+        <strong style="font-size:0.9rem;">{isFinished ? "比賽已結束" : prediction?.metric === "skeletalMuscle" ? "增肌比賽" : "減脂比賽"}</strong>
         <span style="font-size:0.75rem;opacity:0.6;">剩餘 {remainingDays} 天</span>
       </div>
       <div class="ib-progress-track" style="margin-bottom:0.5rem;">
@@ -754,7 +901,7 @@ function CompetitionProgress({
           </span>
           <span style="opacity:0.6;"> / {totalPredicted} 人</span>
           <span style="opacity:0.5;margin-left:0.5rem;">
-            預測 {prediction.predictedFatPct}%
+            預測 {prediction.predictedValue}{prediction.metric === "skeletalMuscle" ? "kg" : "%"}
           </span>
           {inDanger && <span style="margin-left:0.5rem;"><Icon name="alert-triangle" size={16} color="var(--ib-danger)" /></span>}
           {isSafe && <span style="margin-left:0.5rem;"><Icon name="check-circle" size={16} color="var(--ib-success)" /></span>}

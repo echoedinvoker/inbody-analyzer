@@ -1,10 +1,10 @@
 /**
- * Demo mode: create/reset demo user with pre-seeded data
+ * Demo mode: create/reset demo user with clean slate (0 reports)
+ * User experiences the full 0→1→2→3→4→5 upload progression.
  */
 import { eq } from "drizzle-orm";
 import { existsSync, mkdirSync, copyFileSync } from "fs";
 import { db, schema } from "../db/index.ts";
-import { checkBadges } from "./badges.ts";
 
 const DATA_DIR = process.env.DATABASE_PATH
   ? process.env.DATABASE_PATH.replace(/\/[^/]+$/, "")
@@ -13,24 +13,27 @@ const DATA_DIR = process.env.DATABASE_PATH
 const DEMO_NAME = "Demo 訪客";
 const DEMO_INVITE = "DEMO-GUEST";
 
-// Realistic 2-month fat loss journey (5 data points)
-const DEMO_MEASUREMENTS = [
-  { dayOffset: 0,  weight: 75.3, skeletalMuscle: 31.8, bodyFatMass: 16.5, bodyFatPct: 21.9, bmi: 24.7, totalBodyWater: 40.5, visceralFatLevel: 8, basalMetabolicRate: 1585, inbodyScore: 73 },
-  { dayOffset: 12, weight: 74.6, skeletalMuscle: 32.0, bodyFatMass: 15.6, bodyFatPct: 20.9, bmi: 24.5, totalBodyWater: 40.7, visceralFatLevel: 8, basalMetabolicRate: 1592, inbodyScore: 75 },
-  { dayOffset: 25, weight: 73.8, skeletalMuscle: 32.2, bodyFatMass: 14.6, bodyFatPct: 19.8, bmi: 24.2, totalBodyWater: 40.9, visceralFatLevel: 7, basalMetabolicRate: 1600, inbodyScore: 77 },
-  { dayOffset: 38, weight: 73.2, skeletalMuscle: 32.4, bodyFatMass: 13.9, bodyFatPct: 19.0, bmi: 24.0, totalBodyWater: 41.1, visceralFatLevel: 7, basalMetabolicRate: 1608, inbodyScore: 78 },
-  { dayOffset: 48, weight: 72.5, skeletalMuscle: 32.5, bodyFatMass: 13.1, bodyFatPct: 18.1, bmi: 23.8, totalBodyWater: 41.3, visceralFatLevel: 7, basalMetabolicRate: 1615, inbodyScore: 80 },
+/** Demo sample photos: provided sequentially based on upload count */
+const DEMO_PHOTOS = [
+  "demo-1.jpg", // 0 uploads → show this
+  "demo-2.jpg", // 1 upload  → show this
+  "demo-3.jpg", // 2 uploads → show this
+  "demo-4.jpg", // 3 uploads → show this
+  "demo-5.jpg", // 4 uploads → show this
 ];
 
-function addDays(base: Date, days: number): string {
-  const d = new Date(base);
-  d.setDate(d.getDate() + days);
-  return d.toISOString().slice(0, 10);
+/** Max uploads allowed for demo user */
+export const DEMO_MAX_UPLOADS = 5;
+
+/** Get the sample photo filename for the current upload count, or null if all used */
+export function getDemoSamplePhoto(uploadCount: number): string | null {
+  if (uploadCount < 0 || uploadCount >= DEMO_PHOTOS.length) return null;
+  return DEMO_PHOTOS[uploadCount]!;
 }
 
-/** Delete all demo user data and recreate from scratch */
+/** Delete all demo user data and recreate with clean slate */
 function resetDemoData(userId: number) {
-  // Delete in FK order: measurements → reports → adviceCache → userGoals → badges → sessions
+  // Delete in FK order: measurements → reports → adviceCache → userGoals → badges
   const reportIds = db
     .select({ id: schema.reports.id })
     .from(schema.reports)
@@ -45,63 +48,35 @@ function resetDemoData(userId: number) {
   db.delete(schema.adviceCache).where(eq(schema.adviceCache.userId, userId)).run();
   db.delete(schema.userGoals).where(eq(schema.userGoals.userId, userId)).run();
   db.delete(schema.badges).where(eq(schema.badges.userId, userId)).run();
-  // Don't delete sessions - we're about to create one
 
-  // Competition starts ~50 days ago so there's still time left
-  const compStart = new Date();
-  compStart.setDate(compStart.getDate() - 50);
-  const compEnd = new Date(compStart);
-  compEnd.setDate(compEnd.getDate() + 60);
-
+  // Reset user: clear competition dates so they get set on first upload
   db.update(schema.users)
     .set({
       goal: "cut",
-      competitionStart: compStart.toISOString().slice(0, 10),
-      competitionEnd: compEnd.toISOString().slice(0, 10),
+      competitionStart: null,
+      competitionEnd: null,
     })
     .where(eq(schema.users.id, userId))
     .run();
 
-  // Insert goal
+  // Insert goal so the target lines show up after first upload
   db.insert(schema.userGoals)
     .values({ userId, targetWeight: 70, targetBodyFatPct: 17, targetSkeletalMuscle: 33 })
     .run();
+}
 
-  // Insert pre-seeded measurements
-  for (const m of DEMO_MEASUREMENTS) {
-    const measuredAt = addDays(compStart, m.dayOffset);
-    const report = db
-      .insert(schema.reports)
-      .values({
-        userId,
-        measuredAt,
-        photoPath: null,
-        rawJson: null,
-        confirmed: true,
-      })
-      .returning()
-      .get();
+/** Ensure all demo sample photos are in data/samples/ */
+function ensureSamplePhotos() {
+  const destDir = `${DATA_DIR}/samples`;
+  mkdirSync(destDir, { recursive: true });
 
-    db.insert(schema.measurements)
-      .values({
-        reportId: report.id,
-        weight: m.weight,
-        skeletalMuscle: m.skeletalMuscle,
-        bodyFatMass: m.bodyFatMass,
-        bodyFatPct: m.bodyFatPct,
-        bmi: m.bmi,
-        totalBodyWater: m.totalBodyWater,
-        visceralFatLevel: m.visceralFatLevel,
-        basalMetabolicRate: m.basalMetabolicRate,
-        inbodyScore: m.inbodyScore,
-        segmentalLeanJson: null,
-        segmentalFatJson: null,
-      })
-      .run();
+  for (const photo of DEMO_PHOTOS) {
+    const dest = `${destDir}/${photo}`;
+    const src = `./public/samples/${photo}`;
+    if (!existsSync(dest) && existsSync(src)) {
+      copyFileSync(src, dest);
+    }
   }
-
-  // Award badges
-  checkBadges(userId);
 }
 
 /** Get or create demo user, reset data, return userId */
@@ -127,18 +102,7 @@ export function getOrCreateDemoUser(): number {
   }
 
   resetDemoData(user.id);
-
-  // Ensure sample photo is in data/samples/ (copy from bundled public/ if needed)
-  const sampleDest = `${DATA_DIR}/samples/sample-inbody.jpg`;
-  const sampleSrc = "./public/samples/sample-inbody.jpg";
-  if (!existsSync(sampleDest) && existsSync(sampleSrc)) {
-    mkdirSync(`${DATA_DIR}/samples`, { recursive: true });
-    copyFileSync(sampleSrc, sampleDest);
-  }
+  ensureSamplePhotos();
 
   return user.id;
 }
-
-/** Max uploads allowed for demo user (prevent API abuse) */
-export const DEMO_MAX_UPLOADS = 3;
-

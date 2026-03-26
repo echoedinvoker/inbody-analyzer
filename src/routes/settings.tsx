@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
+import { getUserBadges } from "../lib/badges.ts";
 import { Layout } from "../views/layout.tsx";
 
 const settings = new Hono();
@@ -15,6 +16,10 @@ settings.get("/settings", (c) => {
     .from(schema.userGoals)
     .where(eq(schema.userGoals.userId, user.id))
     .get();
+
+  const myBadges = getUserBadges(user.id);
+  const currentUser = db.select().from(schema.users).where(eq(schema.users.id, user.id)).get();
+  const activeTitle = currentUser?.activeTitle || "";
 
   return c.html(
     <Layout title="設定" user={user}>
@@ -38,6 +43,24 @@ settings.get("/settings", (c) => {
               </option>
             </select>
           </label>
+        </fieldset>
+
+        <fieldset>
+          <legend>頭銜</legend>
+          <label>
+            選擇頭銜（顯示在排行榜名字前方）
+            <select name="active_title">
+              <option value="" selected={!activeTitle}>不使用頭銜</option>
+              {myBadges.map((b) => (
+                <option value={b.type} selected={activeTitle === b.type}>
+                  {b.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {myBadges.length === 0 && (
+            <p style="font-size:0.8rem;opacity:0.5;margin:0;">還沒有獲得任何徽章，開始上傳報告吧！</p>
+          )}
         </fieldset>
 
         <fieldset>
@@ -92,9 +115,11 @@ settings.post("/settings", async (c) => {
     return isNaN(n) ? null : n;
   };
 
-  // Update user goal
+  const activeTitle = String(body.active_title || "").trim() || null;
+
+  // Update user goal + title
   db.update(schema.users)
-    .set({ goal: goal as "cut" | "bulk" | "maintain" })
+    .set({ goal: goal as "cut" | "bulk" | "maintain", activeTitle })
     .where(eq(schema.users.id, user.id))
     .run();
 

@@ -142,6 +142,49 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
         .nav-brand { display: inline-flex; align-items: center; gap: 0.4rem; color: var(--ib-primary); text-decoration: none; }
         .nav-brand:hover { color: var(--ib-primary-hover); }
 
+        /* ── Top Loading Bar ── */
+        .ib-loading-bar {
+          position: fixed; top: 0; left: 0; height: 3px; z-index: 9999;
+          background: var(--ib-gradient-primary);
+          width: 0; opacity: 0;
+          transition: none;
+        }
+        .ib-loading-bar.active {
+          opacity: 1;
+          animation: ib-loading 1.8s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+        }
+        @keyframes ib-loading {
+          0%   { width: 0; }
+          20%  { width: 35%; }
+          50%  { width: 65%; }
+          80%  { width: 85%; }
+          100% { width: 92%; }
+        }
+        .ib-loading-bar.done {
+          width: 100% !important; opacity: 0;
+          transition: width 0.15s ease, opacity 0.3s ease 0.15s;
+        }
+
+        /* ── Button Loading State ── */
+        .ib-btn-loading {
+          pointer-events: none; opacity: 0.7; position: relative;
+        }
+        .ib-btn-loading::after {
+          content: ''; display: inline-block;
+          width: 14px; height: 14px; margin-left: 6px;
+          border: 2px solid transparent;
+          border-top-color: currentColor; border-radius: 50%;
+          animation: ib-spin 0.6s linear infinite;
+          vertical-align: middle;
+        }
+        @keyframes ib-spin {
+          to { transform: rotate(360deg); }
+        }
+        @keyframes ib-blink {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.3; }
+        }
+
         /* ── Responsive ── */
         @media (max-width: 768px) {
           div[style*="grid-template-columns: 1fr 1fr"] { grid-template-columns: 1fr !important; }
@@ -153,6 +196,7 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
       `}</style>
     </head>
     <body>
+      <div class="ib-loading-bar" id="ib-loading-bar"></div>
       <nav>
         <strong>
           <a href="/" class="nav-brand">
@@ -180,6 +224,44 @@ export const Layout: FC<{ title?: string; user?: { name: string; isAdmin?: boole
         )}
       </nav>
       <main>{children}</main>
+      {raw(`<script>
+(function(){
+  var bar = document.getElementById('ib-loading-bar');
+  function startLoading() {
+    bar.classList.remove('done');
+    bar.offsetHeight; // force reflow
+    bar.classList.add('active');
+  }
+  // All link clicks (except anchors, new tabs, javascript:)
+  document.addEventListener('click', function(e) {
+    var a = e.target.closest('a[href]');
+    if (!a) return;
+    var href = a.getAttribute('href') || '';
+    if (href.startsWith('#') || href.startsWith('javascript:') || a.target === '_blank') return;
+    // Add loading state to button-styled links
+    if (a.classList.contains('btn-primary') || a.classList.contains('btn-outline') || a.classList.contains('btn-success')) {
+      a.classList.add('ib-btn-loading');
+    }
+    startLoading();
+  });
+  // All form submissions
+  document.addEventListener('submit', function(e) {
+    var btn = e.target.querySelector('button[type="submit"], button:not([type])');
+    if (btn && !btn.classList.contains('btn-logout')) {
+      btn.classList.add('ib-btn-loading');
+    }
+    startLoading();
+  });
+  // Clean up on page show (back/forward cache)
+  window.addEventListener('pageshow', function() {
+    bar.classList.remove('active');
+    bar.classList.add('done');
+    document.querySelectorAll('.ib-btn-loading').forEach(function(el) {
+      el.classList.remove('ib-btn-loading');
+    });
+  });
+})();
+</script>`)}
     </body>
   </html>
   </>

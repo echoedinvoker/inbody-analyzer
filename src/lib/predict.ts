@@ -1,20 +1,23 @@
-import { eq, asc } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
+import { getCompetitionMode } from "./config.ts";
+import { getCompetitionMeasurements } from "./competition.ts";
 
 export type Prediction = {
   userId: number;
   name: string;
-  firstFatPct: number;
-  currentFatPct: number;
-  predictedFatPct: number;
-  predictedChange: number; // predicted - first (negative = good for cut)
+  firstValue: number;
+  currentValue: number;
+  predictedValue: number;
+  predictedChange: number; // predicted - first (negative = good for cut, positive = good for bulk)
+  metric: "bodyFatPct" | "skeletalMuscle";
   dataPoints: number;
   competitionEnd: string;
 };
 
 /**
  * Linear regression: y = slope * x + intercept
- * x = days since first measurement, y = body fat %
+ * x = days since first measurement, y = metric value
  */
 function linearRegression(points: { x: number; y: number }[]): { slope: number; intercept: number } | null {
   const n = points.length;
@@ -37,55 +40,52 @@ function linearRegression(points: { x: number; y: number }[]): { slope: number; 
 }
 
 /**
- * Predict a single user's final body fat %
+ * Predict a single user's final metric value, scoped to current competition.
  */
 export function predictUser(userId: number): Prediction | null {
   const user = db.select().from(schema.users).where(eq(schema.users.id, userId)).get();
   if (!user || !user.competitionEnd) return null;
 
-  const rows = db
-    .select({
-      measuredAt: schema.reports.measuredAt,
-      bodyFatPct: schema.measurements.bodyFatPct,
-    })
-    .from(schema.measurements)
-    .innerJoin(schema.reports, eq(schema.measurements.reportId, schema.reports.id))
-    .where(eq(schema.reports.userId, userId))
-    .orderBy(asc(schema.reports.measuredAt))
-    .all()
-    .filter((r) => r.bodyFatPct != null);
+  const mode = getCompetitionMode();
+  const metricField = mode === "bulk" ? "skeletalMuscle" : "bodyFatPct";
 
+  const rows = getCompetitionMeasurements(userId).filter((r) => r[metricField] != null);
   if (rows.length < 2) return null;
 
   const firstDate = new Date(rows[0]!.measuredAt).getTime();
   const points = rows.map((r) => ({
-    x: (new Date(r.measuredAt).getTime() - firstDate) / (1000 * 60 * 60 * 24), // days
-    y: r.bodyFatPct!,
+    x: (new Date(r.measuredAt).getTime() - firstDate) / (1000 * 60 * 60 * 24),
+    y: r[metricField]!,
   }));
 
   const reg = linearRegression(points);
   if (!reg) return null;
 
   const endDays = (new Date(user.competitionEnd).getTime() - firstDate) / (1000 * 60 * 60 * 24);
-  const predictedFatPct = Math.round((reg.slope * endDays + reg.intercept) * 10) / 10;
+  const predictedValue = Math.round((reg.slope * endDays + reg.intercept) * 10) / 10;
 
   return {
     userId,
     name: user.name,
-    firstFatPct: rows[0]!.bodyFatPct!,
-    currentFatPct: rows[rows.length - 1]!.bodyFatPct!,
-    predictedFatPct,
-    predictedChange: Math.round((predictedFatPct - rows[0]!.bodyFatPct!) * 10) / 10,
+    firstValue: rows[0]![metricField]!,
+    currentValue: rows[rows.length - 1]![metricField]!,
+    predictedValue,
+    predictedChange: Math.round((predictedValue - rows[0]![metricField]!) * 10) / 10,
+    metric: metricField,
     dataPoints: rows.length,
     competitionEnd: user.competitionEnd,
   };
 }
 
 /**
- * Get predictions for all users, sorted by most fat loss (most negative change first)
+ * Get predictions for all users, sorted by best performance.
  */
-export function predictAll(): Prediction[] {
-  const users = db.select().from(schema.users).all().filter((u) => !u.isDemo);
+export function predictAll(includeDemoUserId?: number): Prediction[] {
+  const mode = getCompetitionMode();
+  const users = db.select().from(schema.users).all().filter((u) => {
+    if (!u.isDemo) return true;
+    return u.id === includeDemoUserId;
+  });
   const predictions: Prediction[] = [];
 
   for (const u of users) {
@@ -93,7 +93,10 @@ export function predictAll(): Prediction[] {
     if (p) predictions.push(p);
   }
 
-  // Sort: most negative change first (best fat loss)
-  predictions.sort((a, b) => a.predictedChange - b.predictedChange);
+  if (mode === "bulk") {
+    predictions.sort((a, b) => b.predictedChange - a.predictedChange);
+  } else {
+    predictions.sort((a, b) => a.predictedChange - b.predictedChange);
+  }
   return predictions;
 }

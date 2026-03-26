@@ -19,6 +19,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.74.0",
     "@hono/node-server": "^1.19.9",
+    "@line/bot-sdk": "^10.6.0",
     "drizzle-orm": "^0.45.1",
     "heic-convert": "^2.1.0",
     "hono": "^4.11.9"

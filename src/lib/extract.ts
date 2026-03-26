@@ -14,6 +14,8 @@ export type ExtractedData = {
   visceral_fat_level: number | null;
   basal_metabolic_rate: number | null;
   inbody_score: number | null;
+  is_inbody: boolean;
+  device_type: string | null;
   segmental_lean: {
     right_arm: number | null;
     left_arm: number | null;
@@ -67,7 +69,14 @@ const EXTRACTION_PROMPT = `你是 InBody 體組成分析報告的數據提取專
 - 區分公斤 (kg) 和磅 (lbs)，所有數值統一用公斤
 - InBody 報告有多種型號（270/370/570/770），版面不同但核心欄位相同
 - 若照片模糊或部分遮擋導致無法確認某個數值，寧可回傳 null 也不要猜
-- 只回傳 JSON，不要加任何說明文字`;
+- 只回傳 JSON，不要加任何說明文字
+
+額外判斷（加在 JSON 最外層）：
+- "is_inbody": true/false — 這張照片是否為 InBody 品牌的專業體組成分析儀報告？
+  判斷依據：InBody logo、型號標記（InBody 270/370/570/770/970）、報告版面特徵（節段分析條形圖、InBody 分數區塊等）。
+  家庭式體脂計（如 Tanita、OMRON、小米體脂秤、Garmin）的螢幕顯示或 app 截圖應回傳 false。
+  手寫數據、純文字截圖也回傳 false。
+- "device_type": "InBody 570" / "InBody 270" / "家庭式體脂計" / "app 截圖" / "未知" — 判斷設備類型描述`;
 
 export async function extractFromPhoto(photoPath: string): Promise<{
   data: ExtractedData;

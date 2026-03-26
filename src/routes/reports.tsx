@@ -6,8 +6,10 @@ import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { extractFromPhoto, type ExtractedData } from "../lib/extract.ts";
 import { checkBadges } from "../lib/badges.ts";
+import { updateStreak } from "../lib/streak.ts";
+import { notifyNewUpload } from "../lib/line-notify.ts";
 import { predictUser, predictAll } from "../lib/predict.ts";
-import { DEMO_MAX_UPLOADS } from "../lib/demo.ts";
+import { DEMO_MAX_UPLOADS, getDemoSamplePhoto } from "../lib/demo.ts";
 import { Layout } from "../views/layout.tsx";
 import { Icon, iconSvg } from "../views/icons.tsx";
 
@@ -44,7 +46,7 @@ reports.get("/upload", (c) => {
     previewItems = [
       { icon: "target", text: "開始你的減脂比賽" },
       { icon: "bar-chart-3", text: "建立身體組成基準數據" },
-      { icon: "award", text: "獲得第一枚徽章" },
+      { icon: "trophy", text: "查看大家目前的排名和進度" },
     ];
   } else if (reportCount === 1) {
     previewItems = [
@@ -68,15 +70,15 @@ reports.get("/upload", (c) => {
 
   // Check demo upload limit
   const isDemo = !!(user as any).isDemo;
-  const demoUploadsUsed = isDemo
+  const demoUploadCount = isDemo
     ? db.select({ id: schema.reports.id }).from(schema.reports)
-        .where(eq(schema.reports.userId, user.id)).all()
-        .filter((r: any) => r.photoPath != null).length  // only count real uploads (not seeded)
+        .where(eq(schema.reports.userId, user.id)).all().length
     : 0;
-  const demoLimitReached = isDemo && demoUploadsUsed >= DEMO_MAX_UPLOADS;
+  const demoLimitReached = isDemo && demoUploadCount >= DEMO_MAX_UPLOADS;
 
-  // Check if sample photo exists
-  const sampleExists = isDemo && existsSync(`${DATA_DIR}/samples/sample-inbody.jpg`);
+  // Get the next demo sample photo based on current upload count
+  const demoSampleFile = isDemo ? getDemoSamplePhoto(demoUploadCount) : null;
+  const sampleExists = demoSampleFile && existsSync(`${DATA_DIR}/samples/${demoSampleFile}`);
 
   return c.html(
     <Layout title="上傳報告" user={user}>
@@ -94,19 +96,27 @@ reports.get("/upload", (c) => {
           ))}
         </div>
 
-        {/* Demo: sample photo quick-try */}
+        {/* Demo: sample photo quick-try with preview */}
         {isDemo && sampleExists && !demoLimitReached && (
           <div style="margin-bottom:1.5rem;padding:1.25rem;background:linear-gradient(135deg,rgba(59,130,246,0.05),rgba(139,92,246,0.05));border:1px solid var(--pico-primary);border-radius:8px;text-align:center;">
-            <div style="font-size:0.85rem;opacity:0.7;margin-bottom:0.75rem;">沒有 InBody 報告？試試範例照片</div>
+            <div style="font-size:0.85rem;opacity:0.7;margin-bottom:0.75rem;">
+              {demoUploadCount === 0 ? "沒有 InBody 報告？試試範例照片" : `第 ${demoUploadCount + 1} 張 Demo 照片已準備好`}
+            </div>
+            <div style="margin-bottom:0.75rem;">
+              <img src={`/samples/${demoSampleFile}`} alt="Demo InBody 報告" style="max-height:200px;border-radius:8px;border:1px solid var(--ib-border);"/>
+            </div>
             <form method="post" action="/upload/sample"
               onsubmit="this.querySelector('button').disabled=true;this.querySelector('button').textContent='AI 分析中，請稍候...';document.getElementById('sample-progress')&&(document.getElementById('sample-progress').style.display='block');">
               <button type="submit" class="btn-outline" style="width:100%;font-size:1rem;padding:0.6rem;">
-                使用範例 InBody 報告
+                使用此 Demo 照片上傳
               </button>
               <div id="sample-progress" style="display:none;text-align:center;margin-top:0.75rem;font-size:0.85rem;opacity:0.7;">
-                正在用 AI 辨識範例報告，通常需要 10~20 秒...
+                正在用 AI 辨識報告，通常需要 10~20 秒...
               </div>
             </form>
+            <div style="font-size:0.75rem;opacity:0.5;margin-top:0.5rem;">
+              {demoUploadCount} / {DEMO_MAX_UPLOADS} 已上傳
+            </div>
           </div>
         )}
 
@@ -153,11 +163,10 @@ reports.post("/upload", async (c) => {
 
   // Demo upload limit
   if ((user as any).isDemo) {
-    const uploadCount = db.select({ id: schema.reports.id, photoPath: schema.reports.photoPath })
+    const uploadCount = db.select({ id: schema.reports.id })
       .from(schema.reports)
       .where(eq(schema.reports.userId, user.id))
-      .all()
-      .filter((r) => r.photoPath != null).length;
+      .all().length;
     if (uploadCount >= DEMO_MAX_UPLOADS) {
       return c.redirect("/upload");
     }
@@ -282,7 +291,16 @@ reports.post("/upload/sample", async (c) => {
   const user = requireAuth(c);
   if (!(user as any).isDemo) return c.redirect("/upload");
 
-  const samplePath = `${DATA_DIR}/samples/sample-inbody.jpg`;
+  // Determine which demo photo to use based on current upload count
+  const uploadCount = db.select({ id: schema.reports.id }).from(schema.reports)
+    .where(eq(schema.reports.userId, user.id)).all().length;
+
+  if (uploadCount >= DEMO_MAX_UPLOADS) return c.redirect("/upload");
+
+  const sampleFile = getDemoSamplePhoto(uploadCount);
+  if (!sampleFile) return c.redirect("/upload");
+
+  const samplePath = `${DATA_DIR}/samples/${sampleFile}`;
   if (!existsSync(samplePath)) {
     return c.html(
       <Layout title="錯誤" user={user}>
@@ -542,13 +560,38 @@ reports.post("/report/:id/confirm", async (c) => {
     })
     .run();
 
+  // Update streak
+  const streakResult = updateStreak(user.id);
+
+  // Notify LINE group (fire and forget, don't block on this)
+  notifyNewUpload(user.id, user.name).catch((e) => console.error("LINE notify failed:", e.message));
+
   // Check and award badges
   const newBadges = checkBadges(user.id);
   const badgeParam = newBadges.length > 0
     ? `?badges=${encodeURIComponent(newBadges.map((b) => b.label).join("、"))}`
     : "";
 
-  return c.redirect(`/report/${reportId}/success${badgeParam}`);
+  // Add streak info to success page params
+  const streakParam = streakResult.currentStreak > 0
+    ? `${badgeParam ? "&" : "?"}streak=${streakResult.currentStreak}`
+    : "";
+
+  return c.redirect(`/report/${reportId}/success${badgeParam}${streakParam}`);
+});
+
+// Serve sample photos (for demo preview)
+reports.get("/samples/:filename", (c) => {
+  const filename = c.req.param("filename");
+  if (filename.includes("..") || filename.includes("/")) {
+    return c.text("Bad request", 400);
+  }
+  try {
+    const buffer = readFileSync(`${DATA_DIR}/samples/${filename}`);
+    return new Response(buffer, { headers: { "Content-Type": "image/jpeg" } });
+  } catch {
+    return c.text("Not found", 404);
+  }
 });
 
 // Serve photos
@@ -615,7 +658,7 @@ reports.get("/report/:id/success", (c) => {
 
   // Prediction
   const myPrediction = predictUser(user.id);
-  const allPredictions = predictAll();
+  const allPredictions = predictAll((user as any).isDemo ? user.id : undefined);
   const myRank = myPrediction
     ? allPredictions.findIndex((p) => p.userId === user.id) + 1
     : null;
@@ -752,7 +795,7 @@ reports.get("/report/:id/success", (c) => {
             第 {myRank} 名
           </div>
           <div style="font-size:0.9rem;opacity:0.7;">
-            共 {totalPredicted} 人 · 預測體脂率 {myPrediction.predictedFatPct}%
+            共 {totalPredicted} 人 · 預測{myPrediction.metric === "skeletalMuscle" ? "骨骼肌 " : "體脂率 "}{myPrediction.predictedValue}{myPrediction.metric === "skeletalMuscle" ? "kg" : "%"}
           </div>
           {inDanger && (
             <div style="color:var(--ib-danger);margin-top:0.5rem;font-size:0.9rem;display:flex;align-items:center;justify-content:center;gap:0.4rem;">

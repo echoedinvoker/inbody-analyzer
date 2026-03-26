@@ -1,8 +1,9 @@
 import { Hono } from "hono";
-import { eq, and, isNull, count } from "drizzle-orm";
+import { eq, and, isNull, count, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { nanoid } from "../lib/nanoid.ts";
+import { getStreak } from "../lib/streak.ts";
 
 const rooms = new Hono();
 
@@ -48,10 +49,31 @@ rooms.get("/api/rooms", (c) => {
     const end = new Date(room.endDate);
     const daysLeft = Math.max(0, Math.ceil((end.getTime() - now.getTime()) / (1000 * 60 * 60 * 24)));
 
+    // Streak (global)
+    const streak = getStreak(user.id);
+
+    // User's report count in this room's date range
+    const userReports = db
+      .select({ measuredAt: schema.reports.measuredAt })
+      .from(schema.reports)
+      .where(
+        and(
+          eq(schema.reports.userId, user.id),
+          eq(schema.reports.confirmed, true)
+        )
+      )
+      .all()
+      .filter((r) => {
+        const date = r.measuredAt?.slice(0, 10) || "";
+        return date >= room.startDate && date <= room.endDate;
+      });
+
     return {
       ...room,
       memberCount: memberCount?.count ?? 0,
       daysLeft,
+      streak: streak ? { current: streak.currentStreak } : null,
+      reportCount: userReports.length,
     };
   });
 
@@ -63,7 +85,7 @@ rooms.post("/api/rooms", async (c) => {
   const user = requireAuth(c);
   const body = await c.req.json();
 
-  const { name, mode, startDate, endDate, measurementInterval, maxMembers } = body;
+  const { name, mode, startDate, endDate, measurementInterval, maxMembers, visibilityMode, minSubmissions } = body;
 
   if (!name || !mode || !startDate || !endDate) {
     return c.json({ error: "Missing required fields" }, 400);
@@ -71,6 +93,10 @@ rooms.post("/api/rooms", async (c) => {
 
   if (!["cut", "bulk"].includes(mode)) {
     return c.json({ error: "Invalid mode" }, 400);
+  }
+
+  if (visibilityMode && !["open", "mirror"].includes(visibilityMode)) {
+    return c.json({ error: "Invalid visibility mode" }, 400);
   }
 
   const slug = nanoid(10);
@@ -87,6 +113,8 @@ rooms.post("/api/rooms", async (c) => {
       endDate,
       measurementInterval: measurementInterval ?? 14,
       maxMembers: maxMembers ?? 50,
+      visibilityMode: visibilityMode ?? "open",
+      minSubmissions: minSubmissions ?? 3,
       inviteCode,
     })
     .returning()
@@ -161,6 +189,8 @@ rooms.get("/api/rooms/:slug", (c) => {
     measurementInterval: room.measurementInterval,
     maxMembers: room.maxMembers,
     isActive: room.isActive,
+    visibilityMode: room.visibilityMode,
+    minSubmissions: room.minSubmissions,
     inviteCode: membership?.role === "owner" ? room.inviteCode : undefined,
     isMember: !!membership,
     isOwner: membership?.role === "owner",
@@ -332,6 +362,234 @@ rooms.get("/api/rooms/:slug/members", (c) => {
   }));
 
   return c.json(filtered);
+});
+
+// GET /api/rooms/:slug/available-reports — reports available for submission (mirror mode)
+rooms.get("/api/rooms/:slug/available-reports", (c) => {
+  const user = requireAuth(c);
+  const { slug } = c.req.param();
+
+  const room = db
+    .select()
+    .from(schema.rooms)
+    .where(eq(schema.rooms.slug, slug))
+    .get();
+
+  if (!room) return c.json({ error: "Room not found" }, 404);
+
+  const membership = db
+    .select()
+    .from(schema.roomMembers)
+    .where(
+      and(
+        eq(schema.roomMembers.roomId, room.id),
+        eq(schema.roomMembers.userId, user.id),
+        isNull(schema.roomMembers.leftAt)
+      )
+    )
+    .get();
+
+  if (!membership) return c.json({ error: "Not a member" }, 403);
+
+  // Get already submitted report IDs for this room
+  const submitted = db
+    .select({ reportId: schema.roomSubmissions.reportId })
+    .from(schema.roomSubmissions)
+    .where(
+      and(
+        eq(schema.roomSubmissions.roomId, room.id),
+        eq(schema.roomSubmissions.userId, user.id)
+      )
+    )
+    .all();
+
+  const submittedIds = new Set(submitted.map((s) => s.reportId));
+
+  // Get latest submitted report's measuredAt for date ordering constraint
+  const latestSubmitted = db
+    .select({ measuredAt: schema.reports.measuredAt })
+    .from(schema.roomSubmissions)
+    .innerJoin(schema.reports, eq(schema.roomSubmissions.reportId, schema.reports.id))
+    .where(
+      and(
+        eq(schema.roomSubmissions.roomId, room.id),
+        eq(schema.roomSubmissions.userId, user.id)
+      )
+    )
+    .orderBy(desc(schema.reports.measuredAt))
+    .limit(1)
+    .all();
+
+  const latestDate = latestSubmitted[0]?.measuredAt?.slice(0, 10) || "";
+
+  // Get all confirmed reports within room date range, not yet submitted
+  const reports = db
+    .select({
+      id: schema.reports.id,
+      measuredAt: schema.reports.measuredAt,
+      photoPath: schema.reports.photoPath,
+      isInbody: schema.reports.isInbody,
+      deviceType: schema.reports.deviceType,
+      weight: schema.measurements.weight,
+      skeletalMuscle: schema.measurements.skeletalMuscle,
+      bodyFatPct: schema.measurements.bodyFatPct,
+      inbodyScore: schema.measurements.inbodyScore,
+    })
+    .from(schema.reports)
+    .leftJoin(schema.measurements, eq(schema.measurements.reportId, schema.reports.id))
+    .where(
+      and(
+        eq(schema.reports.userId, user.id),
+        eq(schema.reports.confirmed, true)
+      )
+    )
+    .orderBy(schema.reports.measuredAt)
+    .all();
+
+  const available = reports
+    .filter((r) => {
+      const date = r.measuredAt?.slice(0, 10) || "";
+      // Must be within room date range
+      if (date < room.startDate || date > room.endDate) return false;
+      // Must not already be submitted
+      if (submittedIds.has(r.id)) return false;
+      // Must be after latest submitted date (date ordering)
+      if (latestDate && date <= latestDate) return false;
+      return true;
+    })
+    .map((r) => ({
+      id: r.id,
+      measuredAt: r.measuredAt,
+      photoUrl: r.photoPath ? `/photos/${r.photoPath}` : null,
+      isInbody: r.isInbody,
+      deviceType: r.deviceType,
+      weight: r.weight,
+      skeletalMuscle: r.skeletalMuscle,
+      bodyFatPct: r.bodyFatPct,
+      inbodyScore: r.inbodyScore,
+    }));
+
+  return c.json({
+    available,
+    submittedCount: submittedIds.size,
+    latestSubmittedDate: latestDate || null,
+  });
+});
+
+// POST /api/rooms/:slug/submit — submit a report to a room (mirror mode)
+rooms.post("/api/rooms/:slug/submit", async (c) => {
+  const user = requireAuth(c);
+  const { slug } = c.req.param();
+  const body = await c.req.json();
+  const { reportId } = body;
+
+  if (!reportId) return c.json({ error: "reportId required" }, 400);
+
+  const room = db
+    .select()
+    .from(schema.rooms)
+    .where(eq(schema.rooms.slug, slug))
+    .get();
+
+  if (!room) return c.json({ error: "Room not found" }, 404);
+  if (room.visibilityMode !== "mirror") {
+    return c.json({ error: "This room uses open mode, not manual submission" }, 400);
+  }
+
+  const membership = db
+    .select()
+    .from(schema.roomMembers)
+    .where(
+      and(
+        eq(schema.roomMembers.roomId, room.id),
+        eq(schema.roomMembers.userId, user.id),
+        isNull(schema.roomMembers.leftAt)
+      )
+    )
+    .get();
+
+  if (!membership) return c.json({ error: "Not a member" }, 403);
+
+  // Verify report belongs to user and is confirmed
+  const report = db
+    .select()
+    .from(schema.reports)
+    .where(
+      and(
+        eq(schema.reports.id, reportId),
+        eq(schema.reports.userId, user.id),
+        eq(schema.reports.confirmed, true)
+      )
+    )
+    .get();
+
+  if (!report) return c.json({ error: "Report not found or not confirmed" }, 404);
+
+  // Check date within room range
+  const reportDate = report.measuredAt?.slice(0, 10) || "";
+  if (reportDate < room.startDate || reportDate > room.endDate) {
+    return c.json({ error: "Report date is outside room competition period" }, 400);
+  }
+
+  // Check not already submitted
+  const existing = db
+    .select()
+    .from(schema.roomSubmissions)
+    .where(
+      and(
+        eq(schema.roomSubmissions.roomId, room.id),
+        eq(schema.roomSubmissions.reportId, reportId)
+      )
+    )
+    .get();
+
+  if (existing) return c.json({ error: "Already submitted to this room" }, 400);
+
+  // Check date ordering: must be after latest submitted report
+  const latestSubmitted = db
+    .select({ measuredAt: schema.reports.measuredAt })
+    .from(schema.roomSubmissions)
+    .innerJoin(schema.reports, eq(schema.roomSubmissions.reportId, schema.reports.id))
+    .where(
+      and(
+        eq(schema.roomSubmissions.roomId, room.id),
+        eq(schema.roomSubmissions.userId, user.id)
+      )
+    )
+    .orderBy(desc(schema.reports.measuredAt))
+    .limit(1)
+    .all();
+
+  const latestDate = latestSubmitted[0]?.measuredAt?.slice(0, 10) || "";
+  if (latestDate && reportDate <= latestDate) {
+    return c.json({ error: "Report must be newer than your latest submission" }, 400);
+  }
+
+  // Submit
+  db.insert(schema.roomSubmissions)
+    .values({
+      roomId: room.id,
+      userId: user.id,
+      reportId,
+    })
+    .run();
+
+  // Count total submissions after this one
+  const myCount = db
+    .select({ count: count() })
+    .from(schema.roomSubmissions)
+    .where(
+      and(
+        eq(schema.roomSubmissions.roomId, room.id),
+        eq(schema.roomSubmissions.userId, user.id)
+      )
+    )
+    .get();
+
+  return c.json({
+    ok: true,
+    submissionCount: myCount?.count ?? 0,
+  });
 });
 
 export default rooms;

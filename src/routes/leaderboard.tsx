@@ -4,6 +4,9 @@ import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { predictAll, type Prediction } from "../lib/predict.ts";
 import { getBadgeCount } from "../lib/badges.ts";
+import { getCompetitionMode } from "../lib/config.ts";
+import { getDisplayName } from "../lib/competition.ts";
+import { calculatePeriodMVP, type PeriodMVP } from "../lib/mvp.ts";
 import { Layout } from "../views/layout.tsx";
 import { Icon } from "../views/icons.tsx";
 
@@ -23,7 +26,28 @@ const METRIC_CONFIG: Record<
 leaderboard.get("/leaderboard", (c) => {
   const user = requireAuth(c);
   const period = c.req.query("period") || "90";
-  const metric = (c.req.query("metric") || "bodyFatPct") as MetricKey;
+  const mode = getCompetitionMode();
+  const defaultMetric: MetricKey = mode === "bulk" ? "skeletalMuscle" : "bodyFatPct";
+  const metric = (c.req.query("metric") || defaultMetric) as MetricKey;
+
+  // Check if user has any confirmed reports (for leaderboard gate)
+  const myReportCount = db
+    .select({ id: schema.reports.id })
+    .from(schema.reports)
+    .innerJoin(schema.measurements, eq(schema.measurements.reportId, schema.reports.id))
+    .where(eq(schema.reports.userId, user.id))
+    .all().length;
+  const isLocked = myReportCount === 0;
+
+  // Count how many users have uploaded at least 1 confirmed report
+  const uploadedUserCount = isLocked
+    ? db.select({ userId: schema.reports.userId })
+        .from(schema.reports)
+        .innerJoin(schema.measurements, eq(schema.measurements.reportId, schema.reports.id))
+        .all()
+        .filter((r, i, arr) => arr.findIndex((x) => x.userId === r.userId) === i)
+        .length
+    : 0;
 
   // Calculate date cutoff
   const days = period === "all" ? 0 : Number(period);
@@ -31,12 +55,19 @@ leaderboard.get("/leaderboard", (c) => {
     ? new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString()
     : null;
 
-  // Get all non-demo users with at least 2 confirmed measurements
-  const allUsers = db.select().from(schema.users).all().filter((u) => !u.isDemo);
+  // Get visible users: exclude other demo users but include self if demo
+  // Ghost users are only visible to themselves and admins
+  const allUsers = db.select().from(schema.users).all().filter((u) => {
+    if (u.isDemo && u.id !== user.id) return false;
+    if (!u.isGhost) return true;
+    if (user.isAdmin) return true;
+    return u.id === user.id; // ghost sees only self
+  });
 
   type RankEntry = {
     userId: number;
     name: string;
+    isGhost: boolean;
     firstVal: number;
     lastVal: number;
     diff: number;
@@ -79,6 +110,7 @@ leaderboard.get("/leaderboard", (c) => {
     rankings.push({
       userId: u.id,
       name: u.name,
+      isGhost: u.isGhost ?? false,
       firstVal,
       lastVal,
       diff: lastVal - firstVal,
@@ -102,8 +134,12 @@ leaderboard.get("/leaderboard", (c) => {
   const cfg = METRIC_CONFIG[metric]!;
   rankings.sort((a, b) => (cfg.lowerIsBetter ? a.diff - b.diff : b.diff - a.diff));
 
-  // Whey predictions
-  const predictions = predictAll();
+  // Whey predictions — apply same ghost visibility filter
+  const allPredictions = predictAll((user as any).isDemo ? user.id : undefined);
+  const predictions = allPredictions.filter((p) => {
+    const pUser = allUsers.find((u) => u.id === p.userId);
+    return !!pUser; // only include users visible to current viewer
+  });
 
   // Build chart data for group trend
   const colors = [
@@ -115,119 +151,179 @@ leaderboard.get("/leaderboard", (c) => {
   const myEntry = rankings.find((r) => r.userId === user.id);
   const myRankIdx = myEntry ? rankings.indexOf(myEntry) : -1;
 
+  // Calculate period MVP
+  const mvp = isLocked ? null : calculatePeriodMVP();
+
   return c.html(
     <Layout title="排行榜" user={user}>
       <h2>團體排行榜</h2>
 
-      {/* My Position Hero Card */}
-      {myEntry ? (
-        <div class="ib-card" style="text-align:center;padding:1.5rem;">
-          <div style="font-size:0.8rem;opacity:0.5;margin-bottom:0.25rem;">你的{cfg.label.replace("變化", "")}排名</div>
-          <div style={`font-size:3rem;font-weight:bold;color:${myRankIdx < 3 ? 'var(--ib-success)' : myRankIdx >= rankings.length - 3 ? 'var(--ib-danger)' : 'inherit'};`}>
-            第 {myRankIdx + 1} 名
+      {/* Locked state: 0 confirmed reports */}
+      {isLocked ? (
+        <div>
+          {/* Blurred leaderboard preview */}
+          <div class="ib-locked">
+            <div class="ib-locked-blur" style="padding:1rem;">
+              {/* Fake ranking table to create visual tension */}
+              <div class="ib-card" style="text-align:center;padding:1.5rem;">
+                <div style="font-size:3rem;font-weight:bold;">第 ? 名</div>
+                <div style="opacity:0.7;">??? → ???</div>
+              </div>
+              <table>
+                <thead><tr><th>#</th><th>使用者</th><th>起始值</th><th>最新值</th><th>變化</th></tr></thead>
+                <tbody>
+                  {[1, 2, 3, 4].map((i) => (
+                    <tr><td>{i}</td><td>██████</td><td>██.█%</td><td>██.█%</td><td>-█.█%</td></tr>
+                  ))}
+                </tbody>
+              </table>
+              <div style="height:120px;background:var(--ib-border);border-radius:8px;margin-top:1rem;" />
+            </div>
+            <div class="ib-locked-overlay">
+              <Icon name="lock" size={32} color="var(--ib-text-muted)" />
+              <p style="margin:0;font-size:1.1rem;font-weight:bold;text-align:center;">
+                上傳一張 InBody 報告，即可查看大家目前的進度
+              </p>
+              {uploadedUserCount > 0 && (
+                <p style="margin:0;font-size:0.9rem;opacity:0.7;text-align:center;">
+                  已有 {uploadedUserCount} 人上傳了第一筆紀錄
+                </p>
+              )}
+              <a href="/upload" class="btn-primary" style="font-size:1rem;padding:0.6rem 2rem;margin-top:0.5rem;">
+                <Icon name="upload" size={18} color="#fff" /> 上傳報告解鎖
+              </a>
+            </div>
           </div>
-          <div style="font-size:0.9rem;opacity:0.7;">
-            {myEntry.firstVal}{cfg.unit} → {myEntry.lastVal}{cfg.unit}
-            <span style={`margin-left:0.5rem;font-weight:bold;color:${(cfg.lowerIsBetter ? myEntry.diff < 0 : myEntry.diff > 0) ? 'var(--ib-success)' : 'var(--ib-danger)'};`}>
-              {myEntry.diff > 0 ? "+" : ""}{myEntry.diff.toFixed(1)}{cfg.unit}
-            </span>
-          </div>
-          {myEntry.badgeCount > 0 && (
-            <div style="font-size:0.8rem;opacity:0.5;margin-top:0.25rem;display:inline-flex;align-items:center;gap:0.3rem;">
-              <Icon name="award" size={14} color="var(--ib-primary)" /> {myEntry.badgeCount} 個徽章
+        </div>
+      ) : (
+        <div>
+          {/* My Position Hero Card */}
+          {myEntry ? (
+            <div class="ib-card" style="text-align:center;padding:1.5rem;">
+              <div style="font-size:0.8rem;opacity:0.5;margin-bottom:0.25rem;">你的{cfg.label.replace("變化", "")}排名</div>
+              <div style={`font-size:3rem;font-weight:bold;color:${myRankIdx < 3 ? 'var(--ib-success)' : myRankIdx >= rankings.length - 3 ? 'var(--ib-danger)' : 'inherit'};`}>
+                第 {myRankIdx + 1} 名
+              </div>
+              <div style="font-size:0.9rem;opacity:0.7;">
+                {myEntry.firstVal}{cfg.unit} → {myEntry.lastVal}{cfg.unit}
+                <span style={`margin-left:0.5rem;font-weight:bold;color:${(cfg.lowerIsBetter ? myEntry.diff < 0 : myEntry.diff > 0) ? 'var(--ib-success)' : 'var(--ib-danger)'};`}>
+                  {myEntry.diff > 0 ? "+" : ""}{myEntry.diff.toFixed(1)}{cfg.unit}
+                </span>
+              </div>
+              {myEntry.badgeCount > 0 && (
+                <div style="font-size:0.8rem;opacity:0.5;margin-top:0.25rem;display:inline-flex;align-items:center;gap:0.3rem;">
+                  <Icon name="award" size={14} color="var(--ib-primary)" /> {myEntry.badgeCount} 個徽章
+                </div>
+              )}
+            </div>
+          ) : (
+            <div class="ib-card" style="text-align:center;padding:1.5rem;">
+              <div style="margin-bottom:0.5rem;"><Icon name="bar-chart-3" size={32} color="var(--ib-text-muted)" /></div>
+              <p style="margin:0 0 0.5rem;opacity:0.7;">需要至少 2 筆數據才能加入排名</p>
+              <a href="/upload" class="btn-outline" style="font-size:0.9rem;">上傳報告加入排名</a>
             </div>
           )}
-        </div>
-      ) : (
-        <div class="ib-card" style="text-align:center;padding:1.5rem;">
-          <div style="margin-bottom:0.5rem;"><Icon name="bar-chart-3" size={32} color="var(--ib-text-muted)" /></div>
-          <p style="margin:0 0 0.5rem;opacity:0.7;">需要至少 2 筆數據才能加入排名</p>
-          <a href="/upload" class="btn-outline" style="font-size:0.9rem;">上傳報告加入排名</a>
-        </div>
-      )}
 
-      {/* Filters */}
-      <form method="get" action="/leaderboard" style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;">
-        <label style="flex:1;min-width:120px;">
-          時間區間
-          <select name="period" onchange="this.form.submit()">
-            <option value="30" selected={period === "30"}>最近 30 天</option>
-            <option value="90" selected={period === "90"}>最近 90 天</option>
-            <option value="180" selected={period === "180"}>最近 180 天</option>
-            <option value="all" selected={period === "all"}>全部</option>
-          </select>
-        </label>
-        <label style="flex:1;min-width:120px;">
-          排名指標
-          <select name="metric" onchange="this.form.submit()">
-            <option value="bodyFatPct" selected={metric === "bodyFatPct"}>體脂率變化</option>
-            <option value="skeletalMuscle" selected={metric === "skeletalMuscle"}>骨骼肌變化</option>
-            <option value="inbodyScore" selected={metric === "inbodyScore"}>InBody 分數變化</option>
-          </select>
-        </label>
-      </form>
+          {/* Period MVP */}
+          {mvp && (
+            <div class="ib-card" style={`text-align:center;padding:1rem;margin-bottom:1.5rem;background:${mvp.userId === user.id ? 'rgba(245,158,11,0.12)' : 'rgba(245,158,11,0.06)'};border:1px solid rgba(245,158,11,0.3);`}>
+              <div style="font-size:0.8rem;opacity:0.6;">⭐ 本期最佳進步</div>
+              <div style="font-size:1.3rem;font-weight:bold;margin:0.25rem 0;">
+                {getDisplayName(mvp.userId, mvp.name)}{mvp.userId === user.id ? " (你！)" : ""}
+              </div>
+              <div style="font-size:0.9rem;color:var(--ib-success);font-weight:bold;">
+                {mvp.metric === "skeletalMuscle"
+                  ? `+${mvp.gain}kg 骨骼肌`
+                  : `${mvp.gain}% 體脂率`}
+              </div>
+              <div style="font-size:0.75rem;opacity:0.5;margin-top:0.25rem;">{mvp.periodLabel}</div>
+            </div>
+          )}
 
-      {rankings.length === 0 ? (
-        <p>目前沒有符合條件的排名（每位使用者需至少 2 筆數據）。</p>
-      ) : (
-        <table>
-          <thead>
-            <tr>
-              <th>#</th>
-              <th>使用者</th>
-              <th>起始值</th>
-              <th>最新值</th>
-              <th>變化</th>
-              <th>筆數</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rankings.map((r, i) => {
-              const isGood = cfg.lowerIsBetter ? r.diff < 0 : r.diff > 0;
-              const color = r.diff === 0 ? "" : isGood ? "var(--ib-success)" : "var(--ib-danger)";
-              const arrow = r.diff > 0 ? " ↑" : r.diff < 0 ? " ↓" : " →";
-              const highlight = r.userId === user.id ? "font-weight:bold;background:var(--ib-primary-light);" : "";
-              return (
-                <tr style={highlight}>
-                  <td>{i + 1}</td>
-                  <td>
-                    {r.name}{r.userId === user.id ? " (你)" : ""}
-                    {r.badgeCount > 0 && (
-                      <span title={`${r.badgeCount} 個徽章`} style="margin-left:0.3rem;font-size:0.8rem;opacity:0.7;display:inline-flex;align-items:center;gap:0.15rem;">
-                        <Icon name="award" size={14} color="var(--ib-primary)" />{r.badgeCount}
-                      </span>
-                    )}
-                  </td>
-                  <td>{r.firstVal} {cfg.unit}</td>
-                  <td>{r.lastVal} {cfg.unit}</td>
-                  <td style={color ? `color:${color};font-weight:bold` : ""}>
-                    {r.diff > 0 ? "+" : ""}{r.diff.toFixed(1)}{arrow}
-                  </td>
-                  <td>{r.count}</td>
+          {/* Filters */}
+          <form method="get" action="/leaderboard" style="display:flex;gap:1rem;margin-bottom:1.5rem;flex-wrap:wrap;">
+            <label style="flex:1;min-width:120px;">
+              時間區間
+              <select name="period" onchange="this.form.submit()">
+                <option value="30" selected={period === "30"}>最近 30 天</option>
+                <option value="90" selected={period === "90"}>最近 90 天</option>
+                <option value="180" selected={period === "180"}>最近 180 天</option>
+                <option value="all" selected={period === "all"}>全部</option>
+              </select>
+            </label>
+            <label style="flex:1;min-width:120px;">
+              排名指標
+              <select name="metric" onchange="this.form.submit()">
+                <option value="bodyFatPct" selected={metric === "bodyFatPct"}>體脂率變化</option>
+                <option value="skeletalMuscle" selected={metric === "skeletalMuscle"}>骨骼肌變化</option>
+                <option value="inbodyScore" selected={metric === "inbodyScore"}>InBody 分數變化</option>
+              </select>
+            </label>
+          </form>
+
+          {rankings.length === 0 ? (
+            <p>目前沒有符合條件的排名（每位使用者需至少 2 筆數據）。</p>
+          ) : (
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>使用者</th>
+                  <th>起始值</th>
+                  <th>最新值</th>
+                  <th>變化</th>
+                  <th>筆數</th>
                 </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
+              </thead>
+              <tbody>
+                {rankings.map((r, i) => {
+                  const isGood = cfg.lowerIsBetter ? r.diff < 0 : r.diff > 0;
+                  const color = r.diff === 0 ? "" : isGood ? "var(--ib-success)" : "var(--ib-danger)";
+                  const arrow = r.diff > 0 ? " ↑" : r.diff < 0 ? " ↓" : " →";
+                  const highlight = r.userId === user.id ? "font-weight:bold;background:var(--ib-primary-light);" : "";
+                  return (
+                    <tr style={highlight}>
+                      <td>{i + 1}</td>
+                      <td>
+                        {getDisplayName(r.userId, r.name)}{r.userId === user.id ? " (你)" : ""}{r.isGhost && user.isAdmin ? " 👻" : ""}
+                        {r.badgeCount > 0 && (
+                          <span title={`${r.badgeCount} 個徽章`} style="margin-left:0.3rem;font-size:0.8rem;opacity:0.7;display:inline-flex;align-items:center;gap:0.15rem;">
+                            <Icon name="award" size={14} color="var(--ib-primary)" />{r.badgeCount}
+                          </span>
+                        )}
+                      </td>
+                      <td>{r.firstVal} {cfg.unit}</td>
+                      <td>{r.lastVal} {cfg.unit}</td>
+                      <td style={color ? `color:${color};font-weight:bold` : ""}>
+                        {r.diff > 0 ? "+" : ""}{r.diff.toFixed(1)}{arrow}
+                      </td>
+                      <td>{r.count}</td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          )}
 
-      {/* Whey predictor */}
-      <WheyPredictor predictions={predictions} currentUserId={user.id} />
+          {/* Whey predictor */}
+          <WheyPredictor predictions={predictions} currentUserId={user.id} />
 
-      {/* Group trend chart */}
-      {Object.keys(trendData).length > 0 && (
-        <div>
-          <h3>團體{cfg.label.replace("變化", "")}趨勢</h3>
-          <canvas id="groupTrendChart" height="120"></canvas>
+          {/* Group trend chart */}
+          {Object.keys(trendData).length > 0 && (
+            <div>
+              <h3>團體{cfg.label.replace("變化", "")}趨勢</h3>
+              <canvas id="groupTrendChart" height="120"></canvas>
+            </div>
+          )}
+
+          <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+          <script
+            dangerouslySetInnerHTML={{
+              __html: buildGroupChartScript(trendData, colors, cfg.label.replace("變化", ""), cfg.unit),
+            }}
+          />
         </div>
       )}
-
-      <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
-      <script
-        dangerouslySetInnerHTML={{
-          __html: buildGroupChartScript(trendData, colors, cfg.label.replace("變化", ""), cfg.unit),
-        }}
-      />
     </Layout>
   );
 });
@@ -322,15 +418,15 @@ function WheyPredictor({
     <div class="ib-card" style="margin:2rem 0;">
       <h3 style="margin-top:0;display:flex;align-items:center;gap:0.5rem;"><Icon name="milk" size={22} color="var(--ib-primary)" /> 乳清預測器</h3>
       <p style="font-size:0.85rem;opacity:0.7;margin-bottom:1rem;">
-        根據目前趨勢預測比賽結束時的體脂率變化，僅供參考。
+        根據目前趨勢預測比賽結束時的{predictions[0]?.metric === "skeletalMuscle" ? "骨骼肌" : "體脂率"}變化，僅供參考。
       </p>
       <table>
         <thead>
           <tr>
             <th>預測排名</th>
             <th>姓名</th>
-            <th>起始體脂</th>
-            <th>目前體脂</th>
+            <th>{predictions[0]?.metric === "skeletalMuscle" ? "起始肌量" : "起始體脂"}</th>
+            <th>{predictions[0]?.metric === "skeletalMuscle" ? "目前肌量" : "目前體脂"}</th>
             <th>預測最終</th>
             <th>預測變化</th>
             <th>狀態</th>
@@ -356,12 +452,12 @@ function WheyPredictor({
             return (
               <tr style={rowStyle}>
                 <td>{i + 1}</td>
-                <td>{p.name}{isMe ? " (你)" : ""}</td>
-                <td>{p.firstFatPct}%</td>
-                <td>{p.currentFatPct}%</td>
-                <td>{p.predictedFatPct}%</td>
-                <td style={`color:${p.predictedChange < 0 ? "var(--ib-success)" : "var(--ib-danger)"};font-weight:bold`}>
-                  {p.predictedChange > 0 ? "+" : ""}{p.predictedChange}%
+                <td>{getDisplayName(p.userId, p.name)}{isMe ? " (你)" : ""}</td>
+                <td>{p.firstValue}{p.metric === "skeletalMuscle" ? "kg" : "%"}</td>
+                <td>{p.currentValue}{p.metric === "skeletalMuscle" ? "kg" : "%"}</td>
+                <td>{p.predictedValue}{p.metric === "skeletalMuscle" ? "kg" : "%"}</td>
+                <td style={`color:${(p.metric === "skeletalMuscle" ? p.predictedChange > 0 : p.predictedChange < 0) ? "var(--ib-success)" : "var(--ib-danger)"};font-weight:bold`}>
+                  {p.predictedChange > 0 ? "+" : ""}{p.predictedChange}{p.metric === "skeletalMuscle" ? "kg" : "%"}
                 </td>
                 <td style="white-space:nowrap;">
                   {statusIcon ? <><Icon name={statusIcon} size={16} color={isWinner ? "var(--ib-success)" : "var(--ib-danger)"} /> {statusText}</> : statusText}

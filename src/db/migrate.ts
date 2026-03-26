@@ -29,5 +29,22 @@ if (!existing) {
   console.log(`Admin invite code updated.`);
 }
 
+// Seed system_config defaults (idempotent)
+const configDefaults: [string, string][] = [
+  ["competition_mode", "bulk"],
+  ["measurement_interval_days", "14"],
+  ["reminder_days_before", "2"],
+  ["line_group_id", ""],
+  ["cron_secret", crypto.randomUUID()],
+  ["competition_start", ""],
+  ["competition_end", ""],
+];
+for (const [key, value] of configDefaults) {
+  sqlite.run(
+    "INSERT OR IGNORE INTO system_config (key, value) VALUES (?, ?)",
+    [key, value]
+  );
+}
+
 console.log("Migration complete.");
 sqlite.close();

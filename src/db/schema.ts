@@ -24,6 +24,8 @@ export const reports = sqliteTable("reports", {
   photoPath: text("photo_path"),
   rawJson: text("raw_json"),
   confirmed: integer("confirmed", { mode: "boolean" }).default(false),
+  isInbody: integer("is_inbody", { mode: "boolean" }),
+  deviceType: text("device_type"),
   createdAt: text("created_at").default("(datetime('now'))"),
 });
 
@@ -133,9 +135,32 @@ export const rooms = sqliteTable("rooms", {
   maxMembers: integer("max_members").default(50),
   inviteCode: text("invite_code").notNull().unique(),
   lineGroupId: text("line_group_id"),
+  visibilityMode: text("visibility_mode", { enum: ["open", "mirror"] }).default("open"),
+  minSubmissions: integer("min_submissions").default(3),
   isActive: integer("is_active", { mode: "boolean" }).default(true),
   createdAt: text("created_at").default("(datetime('now'))"),
 });
+
+// Room submissions (mirror mode: manual data submission to rooms)
+export const roomSubmissions = sqliteTable(
+  "room_submissions",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roomId: integer("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    reportId: integer("report_id")
+      .notNull()
+      .references(() => reports.id),
+    submittedAt: text("submitted_at").default("(datetime('now'))"),
+  },
+  (table) => ({
+    roomReportUnique: unique().on(table.roomId, table.reportId),
+  })
+);
 
 // Room members (roomId + userId composite unique)
 export const roomMembers = sqliteTable(

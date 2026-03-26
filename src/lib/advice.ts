@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { eq, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
+import { getCompetitionMode } from "./config.ts";
 
 const client = new Anthropic();
 
@@ -80,7 +81,20 @@ export async function getAdvice(userId: number): Promise<string | null> {
     if (parts.length) goalText += `（${parts.join("、")}）`;
   }
 
+  const mode = getCompetitionMode();
+  const modeContext = mode === "bulk"
+    ? `目前為增肌比賽模式。分析重點放在骨骼肌增長趨勢。
+建議方向：蛋白質攝取（每公斤體重 1.6-2.2g）、訓練量與漸進式超負荷、恢復品質（睡眠）、熱量盈餘控制（增肌品質——不是體重增加就好，要看肌肉佔比）。`
+    : `目前為減脂比賽模式。分析重點放在體脂率下降趨勢。
+建議方向：熱量赤字控制、蛋白質攝取以保留肌肉、有氧與重訓搭配。`;
+
+  const trendExample = mode === "bulk"
+    ? "例如「骨骼肌穩定增長，體脂率維持平穩——增肌品質不錯」"
+    : "例如「體脂穩定下降，骨骼肌略有增長」";
+
   const prompt = `你是一位健身教練和營養師。根據以下 InBody 體組成歷史數據，給出 3-5 條具體、可執行的建議。
+
+${modeContext}
 
 使用者：${user.name}
 ${goalText}
@@ -89,7 +103,7 @@ ${goalText}
 ${dataRows}
 
 要求：
-- 先用一句話總結趨勢（例如「體脂穩定下降，骨骼肌略有增長」）
+- 先用一句話總結趨勢（${trendExample}）
 - 再給 3-5 條具體建議，每條包含飲食或訓練的可執行動作
 - 如果數據只有一筆，基於當前狀態給建議，不要硬分析趨勢
 - 語氣直接實用，用繁體中文
