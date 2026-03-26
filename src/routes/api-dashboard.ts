@@ -377,12 +377,14 @@ apiDashboard.get("/api/rooms/:slug/dashboard", async (c) => {
   return c.json({
     room: {
       name: room.name,
+      slug: room.slug,
       mode: room.mode,
       startDate: room.startDate,
       endDate: room.endDate,
       daysLeft,
       visibilityMode: room.visibilityMode,
       minSubmissions: room.minSubmissions,
+      inviteCode: room.inviteCode,
     },
     user: {
       id: user.id,

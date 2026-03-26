@@ -191,7 +191,7 @@ rooms.get("/api/rooms/:slug", (c) => {
     isActive: room.isActive,
     visibilityMode: room.visibilityMode,
     minSubmissions: room.minSubmissions,
-    inviteCode: membership?.role === "owner" ? room.inviteCode : undefined,
+    inviteCode: membership ? room.inviteCode : undefined,
     isMember: !!membership,
     isOwner: membership?.role === "owner",
     memberCount: memberCount?.count ?? 0,
