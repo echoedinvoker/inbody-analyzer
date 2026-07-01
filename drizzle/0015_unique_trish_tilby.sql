@@ -1,0 +1,1 @@
+ALTER TABLE `room_submissions` ADD `hint` text;

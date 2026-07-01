@@ -1,0 +1,1 @@
+ALTER TABLE `room_members` ADD `weight_multiplier` real DEFAULT 1;

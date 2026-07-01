@@ -132,6 +132,7 @@ export const rooms = sqliteTable("rooms", {
   startDate: text("start_date").notNull(),
   endDate: text("end_date").notNull(),
   measurementInterval: integer("measurement_interval").default(14),
+  streakInterval: integer("streak_interval").default(21),
   maxMembers: integer("max_members").default(50),
   inviteCode: text("invite_code").notNull().unique(),
   lineGroupId: text("line_group_id"),
@@ -156,9 +157,32 @@ export const roomSubmissions = sqliteTable(
       .notNull()
       .references(() => reports.id),
     submittedAt: text("submitted_at").default("(datetime('now'))"),
+    hint: text("hint"),
   },
   (table) => ({
     roomReportUnique: unique().on(table.roomId, table.reportId),
+  })
+);
+
+// Room streaks (room-level streak tracking)
+export const roomStreaks = sqliteTable(
+  "room_streaks",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roomId: integer("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => users.id),
+    currentStreak: integer("current_streak").default(0),
+    bestStreak: integer("best_streak").default(0),
+    lastMeasuredAt: text("last_measured_at"),
+    streakDeadline: text("streak_deadline"),
+    updatedAt: text("updated_at"),
+  },
+  (table) => ({
+    roomUserUnique: unique().on(table.roomId, table.userId),
   })
 );
 
@@ -175,8 +199,25 @@ export const roomMembers = sqliteTable(
       .references(() => users.id),
     role: text("role", { enum: ["owner", "member"] }).default("member"),
     isGhost: integer("is_ghost", { mode: "boolean" }).default(false),
+    weightMultiplier: real("weight_multiplier").default(1.0),
     joinedAt: text("joined_at").default("(datetime('now'))"),
     leftAt: text("left_at"),
+  },
+  (table) => ({
+    roomUserUnique: unique().on(table.roomId, table.userId),
+  })
+);
+
+// AI advice cache per room: one per (room, user), regenerated when latest submission changes
+export const roomAdviceCache = sqliteTable(
+  "room_advice_cache",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roomId: integer("room_id").notNull().references(() => rooms.id),
+    userId: integer("user_id").notNull().references(() => users.id),
+    latestSubmissionId: integer("latest_submission_id").notNull(),
+    advice: text("advice").notNull(),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
   },
   (table) => ({
     roomUserUnique: unique().on(table.roomId, table.userId),

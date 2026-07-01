@@ -1,5 +1,5 @@
 import { Hono } from "hono";
-import { eq, desc } from "drizzle-orm";
+import { eq, desc, and, gte } from "drizzle-orm";
 import { writeFileSync, mkdirSync, readFileSync, unlinkSync } from "fs";
 import convert from "heic-convert";
 import { db, schema } from "../db/index.ts";
@@ -47,11 +47,30 @@ apiReports.get("/api/reports", (c) => {
     .orderBy(desc(schema.reports.measuredAt))
     .all();
 
-  return c.json(rows.map((r) => ({
-    ...r,
-    photoUrl: r.photoPath ? `/photos/${r.photoPath}` : null,
-    photoPath: undefined,
-  })));
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+
+  return c.json(rows.map((r) => {
+    const activeRoomCheck = db
+      .select({ id: schema.roomSubmissions.id })
+      .from(schema.roomSubmissions)
+      .innerJoin(schema.rooms, eq(schema.roomSubmissions.roomId, schema.rooms.id))
+      .where(
+        and(
+          eq(schema.roomSubmissions.reportId, r.id),
+          eq(schema.rooms.isActive, true),
+          gte(schema.rooms.endDate, today)
+        )
+      )
+      .limit(1)
+      .get();
+
+    return {
+      ...r,
+      photoUrl: r.photoPath ? `/api/photos/${r.photoPath}` : null,
+      photoPath: undefined,
+      inActiveRoom: !!activeRoomCheck,
+    };
+  }));
 });
 
 // POST /api/reports/upload — upload photo, AI extract
@@ -280,15 +299,24 @@ apiReports.delete("/api/reports/:id", (c) => {
     return c.json({ error: "Report not found" }, 404);
   }
 
-  // Check if submitted to any room
-  const submissions = db
-    .select()
+  // Check if submitted to any active room
+  const today = new Date().toLocaleDateString('sv-SE', { timeZone: 'Asia/Taipei' });
+  const activeRoomCheck = db
+    .select({ id: schema.roomSubmissions.id })
     .from(schema.roomSubmissions)
-    .where(eq(schema.roomSubmissions.reportId, reportId))
-    .all();
+    .innerJoin(schema.rooms, eq(schema.roomSubmissions.roomId, schema.rooms.id))
+    .where(
+      and(
+        eq(schema.roomSubmissions.reportId, reportId),
+        eq(schema.rooms.isActive, true),
+        gte(schema.rooms.endDate, today)
+      )
+    )
+    .limit(1)
+    .get();
 
-  if (submissions.length > 0) {
-    return c.json({ error: "此報告已提交到房間，無法刪除" }, 400);
+  if (activeRoomCheck) {
+    return c.json({ error: "此報告已提交到進行中的房間，無法刪除。賽程結束後可刪除。" }, 400);
   }
 
   // Delete measurement first (foreign key)
