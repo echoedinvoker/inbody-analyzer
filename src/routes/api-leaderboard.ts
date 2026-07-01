@@ -1,13 +1,29 @@
 import { Hono } from "hono";
-import { eq, and, isNull, count } from "drizzle-orm";
+import { eq, and, isNull, count, desc } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { getBadgeCount } from "../lib/badges.ts";
 import { predictAllInRoom } from "../lib/predict-room.ts";
+import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember } from "../lib/room-utils.ts";
 
 const apiLeaderboard = new Hono();
 
 type MetricKey = "bodyFatPct" | "skeletalMuscle" | "inbodyScore";
+
+function getMyLatestMeasuredAt(userId: number, roomId: number): string {
+  const latest = db
+    .select({ measuredAt: schema.reports.measuredAt })
+    .from(schema.roomSubmissions)
+    .innerJoin(schema.reports, eq(schema.roomSubmissions.reportId, schema.reports.id))
+    .where(and(
+      eq(schema.roomSubmissions.roomId, roomId),
+      eq(schema.roomSubmissions.userId, userId)
+    ))
+    .orderBy(desc(schema.reports.measuredAt))
+    .limit(1)
+    .get();
+  return latest?.measuredAt?.slice(0, 10) || "";
+}
 
 const METRIC_CONFIG: Record<
   MetricKey,
@@ -82,7 +98,9 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     .where(eq(schema.rooms.slug, slug))
     .get();
 
-  if (!room) return c.json({ error: "Room not found" }, 404);
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  const isEnded = isRoomEnded(room.endDate);
 
   const membership = db
     .select()
@@ -103,7 +121,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
   // Get submission counts per member (mirror mode)
   let subCountMap = new Map<number, number>();
   let mySubCount = 0;
-  let maxSubCount = 0;
+  let myLatestDate = "";
 
   if (isMirror) {
     const allSubs = db
@@ -118,7 +136,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
 
     subCountMap = new Map(allSubs.map((s) => [s.userId, s.cnt]));
     mySubCount = subCountMap.get(user.id) ?? 0;
-    maxSubCount = Math.max(0, ...allSubs.map((s) => s.cnt));
+    myLatestDate = getMyLatestMeasuredAt(user.id, room.id);
   }
 
   const members = db
@@ -126,6 +144,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       userId: schema.roomMembers.userId,
       name: schema.users.name,
       isGhost: schema.roomMembers.isGhost,
+      weightMultiplier: schema.roomMembers.weightMultiplier,
     })
     .from(schema.roomMembers)
     .innerJoin(schema.users, eq(schema.roomMembers.userId, schema.users.id))
@@ -137,12 +156,18 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     )
     .all();
 
+  let maxOtherDate = "";
+  let totalHiddenCount = 0;
+
   type RankEntry = {
     userId: number;
     name: string;
     isGhost: boolean;
+    multiplier: number;
     firstVal: number;
     lastVal: number;
+    rawDiff: number;
+    weightedDiff: number;
     diff: number;
     count: number;
     badgeCount: number;
@@ -152,7 +177,10 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
 
   const rankings: RankEntry[] = [];
   const trendData: Record<string, { dates: string[]; values: number[] }> = {};
-  const unqualifiedMembers: Array<{ userId: number; name: string; count: number; isMe: boolean }> = [];
+  const unqualifiedMembers: Array<{
+    userId: number; name: string; count: number; isMe: boolean;
+    reason: "no_participation" | "below_minimum";
+  }> = [];
   const minSubs = room.minSubmissions ?? 3;
 
   for (const m of members) {
@@ -162,10 +190,14 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     const theirSubCount = subCountMap.get(m.userId) ?? rows.length;
     const actualCount = isMirror ? theirSubCount : rows.length;
 
-    // Mirror visibility: only show first N rows (N = viewer's submission count)
+    // Mirror visibility: time-based filter (bypassed when room ended)
     let visibleRows = rows;
     if (isMirror && m.userId !== user.id) {
-      visibleRows = rows.slice(0, mySubCount);
+      visibleRows = applyMirrorFilter(rows, { isMe: false, isEnded, myLatestDate });
+      // Track max date across other members (for rankType calculation)
+      const lastDate = rows.at(-1)?.measuredAt?.slice(0, 10) ?? "";
+      if (lastDate > maxOtherDate) maxOtherDate = lastDate;
+      totalHiddenCount += rows.length - visibleRows.length;
     }
 
     // Build trend data from visible rows
@@ -183,13 +215,18 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       };
     }
 
-    // Track unqualified members (below minSubmissions)
-    if (actualCount < minSubs) {
+    const classification = classifyMember(actualCount, minSubs);
+    if (classification === "no_participation") {
       unqualifiedMembers.push({
-        userId: m.userId,
-        name: m.name,
-        count: actualCount,
-        isMe: m.userId === user.id,
+        userId: m.userId, name: m.name, count: actualCount,
+        isMe: m.userId === user.id, reason: "no_participation",
+      });
+      continue;
+    }
+    if (classification === "below_minimum") {
+      unqualifiedMembers.push({
+        userId: m.userId, name: m.name, count: actualCount,
+        isMe: m.userId === user.id, reason: "below_minimum",
       });
     }
 
@@ -203,39 +240,44 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
 
     if (firstVal == null || lastVal == null) continue;
 
+    const multiplier = m.weightMultiplier ?? 1.0;
+    const rawDiff = lastVal - firstVal;
+    const weightedDiff = rawDiff * multiplier;
+
     rankings.push({
       userId: m.userId,
       name: m.name,
       isGhost: m.isGhost ?? false,
+      multiplier,
       firstVal,
       lastVal,
-      diff: lastVal - firstVal,
+      rawDiff,
+      weightedDiff,
+      diff: weightedDiff,
       count: visibleRows.length,
       badgeCount: getBadgeCount(m.userId),
       submissionCount: theirSubCount,
-      hasHidden: isMirror && theirSubCount > (m.userId === user.id ? 0 : mySubCount),
+      hasHidden: computeHasHidden(rows, { isMirror, isEnded, isMe: m.userId === user.id, myLatestDate }),
     });
   }
 
   const cfg = METRIC_CONFIG[metric]!;
-  rankings.sort((a, b) => (cfg.lowerIsBetter ? a.diff - b.diff : b.diff - a.diff));
+  rankings.sort((a, b) => (cfg.lowerIsBetter ? a.weightedDiff - b.weightedDiff : b.weightedDiff - a.weightedDiff));
 
   // Rank type and range
-  let rankType: "real" | "estimated" = "real";
+  const resolved = resolveRankType({ isMirror, isEnded, myLatestDate, maxOtherDate });
+  let rankType: "real" | "estimated" = resolved.rankType;
   let rankRange: { min: number; max: number } | null = null;
 
-  if (isMirror) {
-    rankType = mySubCount >= maxSubCount ? "real" : "estimated";
-    if (rankType === "estimated") {
-      const myRankEntry = rankings.find((r) => r.isMe || r.userId === user.id);
-      if (myRankEntry) {
-        const myIdx = rankings.indexOf(myRankEntry);
-        const hiddenCount = rankings.filter((r) => r.hasHidden && r.userId !== user.id).length;
-        rankRange = {
-          min: Math.max(1, myIdx + 1 - hiddenCount),
-          max: Math.min(rankings.length, myIdx + 1 + hiddenCount),
-        };
-      }
+  if (resolved.shouldComputeRange) {
+    const myRankEntry = rankings.find((r) => r.userId === user.id);
+    if (myRankEntry) {
+      const myIdx = rankings.indexOf(myRankEntry);
+      const hiddenCount = rankings.filter((r) => r.hasHidden && r.userId !== user.id).length;
+      rankRange = {
+        min: Math.max(1, myIdx + 1 - hiddenCount),
+        max: Math.min(rankings.length, myIdx + 1 + hiddenCount),
+      };
     }
   }
 
@@ -269,7 +311,43 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     }));
   } catch {}
 
+  // Progressive visibility for mirror mode: 0 submissions sees first entry only
+  if (isMirror && !myLatestDate && !isEnded) {
+    const maxSubCount = Math.max(0, ...[...subCountMap.values()]);
+    const firstOnlyRankings = members
+      .filter((m) => !m.isGhost && m.userId !== user.id)
+      .map((m) => {
+        const rows = getMemberRows(m.userId, room.id, room);
+        const first = rows[0];
+        const metric_val = first?.[metric] as number | null ?? null;
+        return {
+          userId: m.userId,
+          name: m.name,
+          isMe: false,
+          firstVal: metric_val,
+          isFirstDataOnly: true,
+        };
+      });
+    return c.json({
+      visibility: "first_only" as const,
+      metric,
+      metricLabel: cfg.label,
+      metricUnit: cfg.unit,
+      rankings: firstOnlyRankings,
+      room: {
+        mode: room.mode,
+        endDate: room.endDate,
+        isEnded,
+        memberCount: members.filter((m) => !m.isGhost).length,
+        visibilityMode: room.visibilityMode,
+        minSubmissions: minSubs,
+      },
+      mirrorInfo: { mySubmissions: 0, maxSubmissions: maxSubCount },
+    });
+  }
+
   return c.json({
+    visibility: "full" as const,
     metric,
     metricLabel: cfg.label,
     metricUnit: cfg.unit,
@@ -283,7 +361,10 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       isMe: r.userId === user.id,
       firstVal: r.firstVal,
       lastVal: r.lastVal,
-      diff: Number(r.diff.toFixed(1)),
+      diff: Number(r.weightedDiff.toFixed(1)),
+      rawDiff: Number(r.rawDiff.toFixed(1)),
+      weightedDiff: Number(r.weightedDiff.toFixed(1)),
+      multiplier: r.multiplier,
       count: r.count,
       badgeCount: r.badgeCount,
       submissionCount: r.submissionCount,
@@ -296,11 +377,13 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     room: {
       mode: room.mode,
       endDate: room.endDate,
+      isEnded,
       memberCount: members.filter((m) => !m.isGhost).length,
       visibilityMode: room.visibilityMode,
       minSubmissions: minSubs,
     },
-    mirrorInfo: isMirror ? { mySubmissions: mySubCount, maxSubmissions: maxSubCount } : undefined,
+    mirrorInfo: { mySubmissions: mySubCount, maxSubmissions: Math.max(0, ...[...subCountMap.values()]) },
+    hiddenDataCount: isMirror ? totalHiddenCount : 0,
   });
 });
 
