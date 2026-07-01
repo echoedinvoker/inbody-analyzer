@@ -4,7 +4,7 @@ import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { getBadgeCount } from "../lib/badges.ts";
 import { predictAllInRoom } from "../lib/predict-room.ts";
-import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember } from "../lib/room-utils.ts";
+import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember, applyMultiplier } from "../lib/room-utils.ts";
 
 const apiLeaderboard = new Hono();
 
@@ -173,6 +173,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     badgeCount: number;
     submissionCount: number;
     hasHidden: boolean;
+    isImprovement: boolean;
   };
 
   const rankings: RankEntry[] = [];
@@ -182,6 +183,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     reason: "no_participation" | "below_minimum";
   }> = [];
   const minSubs = room.minSubmissions ?? 3;
+  const cfg = METRIC_CONFIG[metric]!;
 
   for (const m of members) {
     if (m.isGhost && m.userId !== user.id) continue;
@@ -242,7 +244,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
 
     const multiplier = m.weightMultiplier ?? 1.0;
     const rawDiff = lastVal - firstVal;
-    const weightedDiff = rawDiff * multiplier;
+    const { value: weightedDiff, isImprovement } = applyMultiplier(rawDiff, multiplier, cfg.lowerIsBetter);
 
     rankings.push({
       userId: m.userId,
@@ -258,10 +260,10 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       badgeCount: getBadgeCount(m.userId),
       submissionCount: theirSubCount,
       hasHidden: computeHasHidden(rows, { isMirror, isEnded, isMe: m.userId === user.id, myLatestDate }),
+      isImprovement,
     });
   }
 
-  const cfg = METRIC_CONFIG[metric]!;
   rankings.sort((a, b) => (cfg.lowerIsBetter ? a.weightedDiff - b.weightedDiff : b.weightedDiff - a.weightedDiff));
 
   // Rank type and range
@@ -369,6 +371,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       badgeCount: r.badgeCount,
       submissionCount: r.submissionCount,
       hasHidden: r.hasHidden,
+      isImprovement: r.isImprovement,
     })),
     mvp,
     predictions,

@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import {
   isRoomEnded, applyMirrorFilter, applyDateMirrorFilter,
-  resolveRankType, computeHasHidden, classifyMember,
+  resolveRankType, computeHasHidden, classifyMember, applyMultiplier,
 } from "./room-utils.ts";
 
 describe("isRoomEnded", () => {
@@ -112,5 +112,48 @@ describe("classifyMember", () => {
   });
   test("1 submission, minSubs 1 → no_participation", () => {
     expect(classifyMember(1, 1)).toBe("no_participation");
+  });
+});
+
+describe("applyMultiplier", () => {
+  test("skeletalMuscle gain (lowerIsBetter=false, positive diff) → multiply", () => {
+    const r = applyMultiplier(1, 1.5, false);
+    expect(r.value).toBeCloseTo(1.5);
+    expect(r.isImprovement).toBe(true);
+  });
+  test("skeletalMuscle loss (lowerIsBetter=false, negative diff) → divide", () => {
+    const r = applyMultiplier(-1, 1.5, false);
+    expect(r.value).toBeCloseTo(-0.6667, 3);
+    expect(r.isImprovement).toBe(false);
+  });
+  test("bodyFatPct drop (lowerIsBetter=true, negative diff) → multiply", () => {
+    const r = applyMultiplier(-2, 1.5, true);
+    expect(r.value).toBeCloseTo(-3);
+    expect(r.isImprovement).toBe(true);
+  });
+  test("bodyFatPct gain (lowerIsBetter=true, positive diff) → divide", () => {
+    const r = applyMultiplier(2, 1.5, true);
+    expect(r.value).toBeCloseTo(1.3333, 3);
+    expect(r.isImprovement).toBe(false);
+  });
+  test("debuff multiplier on gain → multiply (reduces gain)", () => {
+    const r = applyMultiplier(1, 0.5, false);
+    expect(r.value).toBeCloseTo(0.5);
+    expect(r.isImprovement).toBe(true);
+  });
+  test("debuff multiplier on loss → divide (amplifies loss)", () => {
+    const r = applyMultiplier(-1, 0.5, false);
+    expect(r.value).toBeCloseTo(-2);
+    expect(r.isImprovement).toBe(false);
+  });
+  test("zero diff → zero, isImprovement false (neutral)", () => {
+    const r = applyMultiplier(0, 1.5, false);
+    expect(r.value).toBe(0);
+    expect(r.isImprovement).toBe(false);
+  });
+  test("multiplier 1.0 → no change", () => {
+    const r = applyMultiplier(5, 1.0, false);
+    expect(r.value).toBe(5);
+    expect(r.isImprovement).toBe(true);
   });
 });

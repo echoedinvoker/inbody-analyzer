@@ -54,3 +54,14 @@ export function classifyMember(
   if (actualCount < minSubs) return "below_minimum";
   return "qualified";
 }
+
+export function applyMultiplier(
+  rawDiff: number, multiplier: number, lowerIsBetter: boolean
+): { value: number; isImprovement: boolean } {
+  const isImprovement = lowerIsBetter ? rawDiff < 0 : rawDiff > 0;
+  if (multiplier === 1.0 || rawDiff === 0) return { value: rawDiff, isImprovement };
+  return {
+    value: isImprovement ? rawDiff * multiplier : rawDiff / multiplier,
+    isImprovement,
+  };
+}
