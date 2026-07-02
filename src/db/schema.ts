@@ -186,6 +186,18 @@ export const roomStreaks = sqliteTable(
   })
 );
 
+// Rejection audit: host returned a submission (submission row itself is hard-deleted)
+export const roomSubmissionRejections = sqliteTable("room_submission_rejections", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  roomId: integer("room_id").notNull().references(() => rooms.id),
+  userId: integer("user_id").notNull().references(() => users.id),
+  reportId: integer("report_id").notNull().references(() => reports.id),
+  measuredAt: text("measured_at").notNull(),
+  reason: text("reason"),
+  rejectedBy: integer("rejected_by").notNull().references(() => users.id),
+  rejectedAt: text("rejected_at").$defaultFn(() => new Date().toISOString()),
+});
+
 // Room members (roomId + userId composite unique)
 export const roomMembers = sqliteTable(
   "room_members",

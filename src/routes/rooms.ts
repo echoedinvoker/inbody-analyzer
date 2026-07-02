@@ -843,6 +843,134 @@ rooms.post("/api/rooms/:slug/submit", async (c) => {
   });
 });
 
+// GET /api/rooms/:slug/submissions — list all submissions (owner only, mirror mode)
+rooms.get("/api/rooms/:slug/submissions", (c) => {
+  const user = requireAuth(c);
+  const { slug } = c.req.param();
+
+  const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  const membership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, user.id),
+      eq(schema.roomMembers.role, "owner"),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!membership) return c.json({ error: "Only room owner can review submissions" }, 403);
+
+  if (room.visibilityMode !== "mirror") {
+    return c.json({ error: "Open-mode rooms have no submissions to review" }, 400);
+  }
+
+  const rows = db.select({
+    id: schema.roomSubmissions.id,
+    userId: schema.roomSubmissions.userId,
+    userName: schema.users.name,
+    reportId: schema.roomSubmissions.reportId,
+    measuredAt: schema.reports.measuredAt,
+    submittedAt: schema.roomSubmissions.submittedAt,
+    hint: schema.roomSubmissions.hint,
+    photoPath: schema.reports.photoPath,
+    isInbody: schema.reports.isInbody,
+    weight: schema.measurements.weight,
+    skeletalMuscle: schema.measurements.skeletalMuscle,
+    bodyFatMass: schema.measurements.bodyFatMass,
+    bodyFatPct: schema.measurements.bodyFatPct,
+    bmi: schema.measurements.bmi,
+    inbodyScore: schema.measurements.inbodyScore,
+  })
+    .from(schema.roomSubmissions)
+    .innerJoin(schema.reports, eq(schema.roomSubmissions.reportId, schema.reports.id))
+    .innerJoin(schema.users, eq(schema.roomSubmissions.userId, schema.users.id))
+    .leftJoin(schema.measurements, eq(schema.reports.id, schema.measurements.reportId))
+    .where(eq(schema.roomSubmissions.roomId, room.id))
+    .orderBy(desc(schema.roomSubmissions.id))
+    .all();
+
+  const submissions = rows.map(r => ({
+    id: r.id,
+    userId: r.userId,
+    userName: r.userName,
+    reportId: r.reportId,
+    measuredAt: r.measuredAt,
+    submittedAt: r.submittedAt,
+    hint: r.hint,
+    photoUrl: r.photoPath ? `/api/photos/${r.photoPath}` : null,
+    isInbody: r.isInbody,
+    weight: r.weight,
+    skeletalMuscle: r.skeletalMuscle,
+    bodyFatMass: r.bodyFatMass,
+    bodyFatPct: r.bodyFatPct,
+    bmi: r.bmi,
+    inbodyScore: r.inbodyScore,
+  }));
+
+  return c.json({ submissions });
+});
+
+// POST /api/rooms/:slug/submissions/:id/reject — owner rejects a submission (mirror mode)
+rooms.post("/api/rooms/:slug/submissions/:id/reject", async (c) => {
+  const user = requireAuth(c);
+  const { slug, id: idParam } = c.req.param();
+
+  const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  const membership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, user.id),
+      eq(schema.roomMembers.role, "owner"),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!membership) return c.json({ error: "Only room owner can reject submissions" }, 403);
+
+  const body = await c.req.json();
+  const reason = typeof body.reason === "string" ? body.reason.trim() : undefined;
+  if (reason && reason.length > 500) {
+    return c.json({ error: "退回原因不超過 500 字" }, 400);
+  }
+
+  const submissionId = parseInt(idParam);
+  if (isNaN(submissionId)) return c.json({ error: "Submission not found" }, 404);
+
+  const submission = db.select({
+    id: schema.roomSubmissions.id,
+    userId: schema.roomSubmissions.userId,
+    reportId: schema.roomSubmissions.reportId,
+    roomId: schema.roomSubmissions.roomId,
+  }).from(schema.roomSubmissions).where(eq(schema.roomSubmissions.id, submissionId)).get();
+
+  if (!submission || submission.roomId !== room.id) {
+    return c.json({ error: "Submission not found" }, 404);
+  }
+
+  const report = db.select({ measuredAt: schema.reports.measuredAt })
+    .from(schema.reports).where(eq(schema.reports.id, submission.reportId)).get();
+  const measuredAt = report?.measuredAt ?? "";
+
+  db.insert(schema.roomSubmissionRejections).values({
+    roomId: room.id,
+    userId: submission.userId,
+    reportId: submission.reportId,
+    measuredAt,
+    reason: reason || null,
+    rejectedBy: user.id,
+  }).run();
+
+  db.delete(schema.roomSubmissions).where(eq(schema.roomSubmissions.id, submission.id)).run();
+
+  if (room.streakInterval) {
+    recalcRoomStreak(submission.userId, room.id, room.streakInterval);
+  }
+
+  return c.json({ ok: true, rejectedUserId: submission.userId, rejectedReportId: submission.reportId });
+});
+
 // DELETE /api/rooms/:slug/submissions/latest — withdraw latest submission (mirror mode)
 rooms.delete("/api/rooms/:slug/submissions/latest", async (c) => {
   const user = requireAuth(c);

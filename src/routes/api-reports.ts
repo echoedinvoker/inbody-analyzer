@@ -355,8 +355,25 @@ apiReports.get("/api/photos/:filename", (c) => {
     .where(eq(schema.reports.photoPath, filename))
     .get();
 
-  if (!report || report.userId !== user.id) {
+  if (!report) {
     return c.json({ error: "Not found" }, 404);
+  }
+
+  if (report.userId !== user.id) {
+    const ownerAccess = db.select({ id: schema.roomSubmissions.id })
+      .from(schema.roomSubmissions)
+      .innerJoin(schema.rooms, eq(schema.roomSubmissions.roomId, schema.rooms.id))
+      .where(and(
+        eq(schema.roomSubmissions.reportId, report.id),
+        eq(schema.rooms.ownerId, user.id),
+        eq(schema.rooms.isActive, true)
+      ))
+      .limit(1)
+      .get();
+
+    if (!ownerAccess) {
+      return c.json({ error: "Not found" }, 404);
+    }
   }
 
   try {

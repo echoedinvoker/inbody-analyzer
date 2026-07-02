@@ -120,6 +120,13 @@
       "when": 1777882800000,
       "tag": "0016_patch_users_is_ghost",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1782950789493,
+      "tag": "0017_cooing_shiver_man",
+      "breakpoints": true
     }
   ]
 }

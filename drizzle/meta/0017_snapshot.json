@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "a0000016-patch-users-is-ghost-00000000",
-  "prevId": "078344cc-1af6-447c-92b1-9b8011ab5ce7",
+  "id": "77a691c8-525d-410a-8f4a-c1bdd77cc666",
+  "prevId": "a0000016-patch-users-is-ghost-00000000",
   "tables": {
     "advice_cache": {
       "name": "advice_cache",
@@ -732,6 +732,125 @@
           "tableTo": "users",
           "columnsFrom": [
             "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        }
+      },
+      "compositePrimaryKeys": {},
+      "uniqueConstraints": {},
+      "checkConstraints": {}
+    },
+    "room_submission_rejections": {
+      "name": "room_submission_rejections",
+      "columns": {
+        "id": {
+          "name": "id",
+          "type": "integer",
+          "primaryKey": true,
+          "notNull": true,
+          "autoincrement": true
+        },
+        "room_id": {
+          "name": "room_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "report_id": {
+          "name": "report_id",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "measured_at": {
+          "name": "measured_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "reason": {
+          "name": "reason",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "rejected_by": {
+          "name": "rejected_by",
+          "type": "integer",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "rejected_at": {
+          "name": "rejected_at",
+          "type": "text",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {
+        "room_submission_rejections_room_id_rooms_id_fk": {
+          "name": "room_submission_rejections_room_id_rooms_id_fk",
+          "tableFrom": "room_submission_rejections",
+          "tableTo": "rooms",
+          "columnsFrom": [
+            "room_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_submission_rejections_user_id_users_id_fk": {
+          "name": "room_submission_rejections_user_id_users_id_fk",
+          "tableFrom": "room_submission_rejections",
+          "tableTo": "users",
+          "columnsFrom": [
+            "user_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_submission_rejections_report_id_reports_id_fk": {
+          "name": "room_submission_rejections_report_id_reports_id_fk",
+          "tableFrom": "room_submission_rejections",
+          "tableTo": "reports",
+          "columnsFrom": [
+            "report_id"
+          ],
+          "columnsTo": [
+            "id"
+          ],
+          "onDelete": "no action",
+          "onUpdate": "no action"
+        },
+        "room_submission_rejections_rejected_by_users_id_fk": {
+          "name": "room_submission_rejections_rejected_by_users_id_fk",
+          "tableFrom": "room_submission_rejections",
+          "tableTo": "users",
+          "columnsFrom": [
+            "rejected_by"
           ],
           "columnsTo": [
             "id"

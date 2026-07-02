@@ -522,6 +522,19 @@ apiDashboard.get("/api/rooms/:slug/dashboard", async (c) => {
 
   const isOwner = membership.role === "owner";
 
+  const myRejections = db.select({
+    measuredAt: schema.roomSubmissionRejections.measuredAt,
+    reason: schema.roomSubmissionRejections.reason,
+    rejectedAt: schema.roomSubmissionRejections.rejectedAt,
+  }).from(schema.roomSubmissionRejections)
+    .where(and(
+      eq(schema.roomSubmissionRejections.roomId, room.id),
+      eq(schema.roomSubmissionRejections.userId, user.id)
+    ))
+    .orderBy(desc(schema.roomSubmissionRejections.id))
+    .limit(3)
+    .all();
+
   return c.json({
     room: {
       name: room.name,
@@ -582,6 +595,7 @@ apiDashboard.get("/api/rooms/:slug/dashboard", async (c) => {
     nextStep: nextStepMessage
       ? { action: isMirror ? "submit" : "upload", message: nextStepMessage }
       : null,
+    myRejections,
   });
 });
 
