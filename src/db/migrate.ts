@@ -14,6 +14,32 @@ sqlite.run("PRAGMA journal_mode = WAL");
 sqlite.run("PRAGMA foreign_keys = ON");
 const db = drizzle(sqlite);
 
+// Backfill migration tracker for migrations that were applied manually (schema drift fix).
+// Drizzle tracks applied migrations by count — if the DB has 12 entries but the journal
+// has 18, drizzle tries to run entries 13-18. We register the manually-applied ones
+// so the migrator skips them.
+const applied = (sqlite.query("SELECT count(*) as c FROM __drizzle_migrations").get() as { c: number })?.c ?? 0;
+const journalEntries = 18; // 0000-0017 (16 original + 0016 is_ghost patch + 0017 rejections table)
+if (applied < journalEntries) {
+  const missing: [string, number][] = [
+    // 0012-0015 were applied manually, 0016 is_ghost column already exists
+    ["backfill-0012", 1775358909347],
+    ["backfill-0013", 1775367908139],
+    ["backfill-0014", 1777013894843],
+    ["backfill-0015", 1777030471644],
+    ["backfill-0016-is-ghost", 1777882800000],
+  ];
+  for (const [hash, ts] of missing) {
+    sqlite.run(
+      "INSERT OR IGNORE INTO __drizzle_migrations (hash, created_at) VALUES (?, ?)",
+      [hash, ts]
+    );
+  }
+  // Also ensure the is_ghost column exists (idempotent)
+  try { sqlite.run("ALTER TABLE users ADD COLUMN is_ghost integer DEFAULT false"); } catch {}
+  console.log(`Backfilled migration tracker (was ${applied}, added up to ${journalEntries - 1})`);
+}
+
 migrate(db, { migrationsFolder: "./drizzle" });
 
 // Ensure admin user exists
