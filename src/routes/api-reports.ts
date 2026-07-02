@@ -319,6 +319,11 @@ apiReports.delete("/api/reports/:id", (c) => {
     return c.json({ error: "此報告已提交到進行中的房間，無法刪除。賽程結束後可刪除。" }, 400);
   }
 
+  // Delete rejection audit records referencing this report (FK constraint)
+  db.delete(schema.roomSubmissionRejections)
+    .where(eq(schema.roomSubmissionRejections.reportId, reportId))
+    .run();
+
   // Delete measurement first (foreign key)
   db.delete(schema.measurements)
     .where(eq(schema.measurements.reportId, reportId))
