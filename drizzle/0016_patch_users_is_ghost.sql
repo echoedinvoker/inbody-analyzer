@@ -1,0 +1,1 @@
+ALTER TABLE `users` ADD `is_ghost` integer DEFAULT false;
