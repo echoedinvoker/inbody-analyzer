@@ -84,6 +84,7 @@ export async function extractFromPhoto(photoPath: string, options?: {
 }): Promise<{
   data: ExtractedData;
   rawResponse: string;
+  usage?: { input_tokens: number; output_tokens: number };
 }> {
   const imageBuffer = readFileSync(photoPath);
   const base64 = imageBuffer.toString("base64");
@@ -124,5 +125,9 @@ export async function extractFromPhoto(photoPath: string, options?: {
   }
 
   const data = JSON.parse(jsonMatch[0]) as ExtractedData;
-  return { data, rawResponse: rawText };
+  return {
+    data,
+    rawResponse: rawText,
+    usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
+  };
 }
