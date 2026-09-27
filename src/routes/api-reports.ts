@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import { eq, desc, and, gte } from "drizzle-orm";
 import { writeFileSync, mkdirSync, readFileSync, unlinkSync } from "fs";
 import convert from "heic-convert";
+import { stripMetadata } from "../lib/strip-metadata.ts";
 import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { extractFromPhoto, type ExtractedData } from "../lib/extract.ts";
@@ -107,13 +108,13 @@ apiReports.post("/api/reports/upload", async (c) => {
       format: "JPEG",
       quality: 0.9,
     });
-    writeFileSync(photoPath, Buffer.from(jpegBuffer));
+    writeFileSync(photoPath, stripMetadata(Buffer.from(jpegBuffer), "jpeg"));
   } else {
     const saveExt = sniffed === "png" ? "png" : "jpg";
     savedMediaType = sniffed === "png" ? "image/png" : "image/jpeg";
     savedFilename = `${user.id}_${timestamp}.${saveExt}`;
     photoPath = `${PHOTO_DIR}/${savedFilename}`;
-    writeFileSync(photoPath, Buffer.from(arrayBuffer));
+    writeFileSync(photoPath, stripMetadata(Buffer.from(arrayBuffer), sniffed === "png" ? "png" : "jpeg"));
   }
 
   // Create report record
