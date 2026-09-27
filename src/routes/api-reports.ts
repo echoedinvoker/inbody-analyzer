@@ -5,6 +5,7 @@ import convert from "heic-convert";
 import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { extractFromPhoto, type ExtractedData } from "../lib/extract.ts";
+import { sniffImageType } from "../lib/image-sniff.ts";
 import { checkBadges } from "../lib/badges.ts";
 import { updateStreak } from "../lib/streak.ts";
 import { notifyNewUpload } from "../lib/line-notify.ts";
@@ -13,13 +14,6 @@ const DATA_DIR = process.env.DATABASE_PATH
   ? process.env.DATABASE_PATH.replace(/\/[^/]+$/, "")
   : "./data";
 const PHOTO_DIR = `${DATA_DIR}/photos`;
-
-const ACCEPTED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/heic",
-  "image/heif",
-];
 
 const apiReports = new Hono();
 
@@ -88,25 +82,22 @@ apiReports.post("/api/reports/upload", async (c) => {
     return c.json({ error: "照片太大，請控制在 5MB 以內" }, 400);
   }
 
-  const fileName = (photo.name || "").toLowerCase();
-  const ext = fileName.slice(fileName.lastIndexOf("."));
-  const acceptedExts = [".jpg", ".jpeg", ".png", ".heic", ".heif"];
-  const isAccepted =
-    ACCEPTED_TYPES.includes(photo.type) || acceptedExts.includes(ext);
+  const arrayBuffer = await photo.arrayBuffer();
+  const headerBytes = Buffer.from(arrayBuffer.slice(0, 12));
+  const sniffed = sniffImageType(headerBytes);
 
-  if (!isAccepted) {
+  if (sniffed === "unknown") {
     return c.json({ error: "只支援 JPEG、PNG、HEIC 格式" }, 400);
   }
 
-  // Save photo (convert HEIC to JPEG)
   const timestamp = Date.now();
-  const arrayBuffer = await photo.arrayBuffer();
   mkdirSync(PHOTO_DIR, { recursive: true });
 
-  const needsConvert = [".heic", ".heif"].includes(ext);
+  const needsConvert = sniffed === "heic";
 
   let savedFilename: string;
   let photoPath: string;
+  let savedMediaType: "image/jpeg" | "image/png" = "image/jpeg";
 
   if (needsConvert) {
     savedFilename = `${user.id}_${timestamp}.jpg`;
@@ -118,7 +109,8 @@ apiReports.post("/api/reports/upload", async (c) => {
     });
     writeFileSync(photoPath, Buffer.from(jpegBuffer));
   } else {
-    const saveExt = photo.type === "image/png" ? "png" : "jpg";
+    const saveExt = sniffed === "png" ? "png" : "jpg";
+    savedMediaType = sniffed === "png" ? "image/png" : "image/jpeg";
     savedFilename = `${user.id}_${timestamp}.${saveExt}`;
     photoPath = `${PHOTO_DIR}/${savedFilename}`;
     writeFileSync(photoPath, Buffer.from(arrayBuffer));
@@ -138,7 +130,7 @@ apiReports.post("/api/reports/upload", async (c) => {
 
   // Extract data with AI
   try {
-    const { data, rawResponse } = await extractFromPhoto(photoPath);
+    const { data, rawResponse } = await extractFromPhoto(photoPath, { mediaType: savedMediaType });
 
     db.update(schema.reports)
       .set({
@@ -155,7 +147,8 @@ apiReports.post("/api/reports/upload", async (c) => {
       extractedData: data,
     });
   } catch (error: any) {
-    return c.json({ error: `AI 分析失敗：${error.message}` }, 500);
+    console.error("AI extraction failed:", error.message);
+    return c.json({ error: "AI 分析失敗，請再試一次或換一張照片" }, 500);
   }
 });
 

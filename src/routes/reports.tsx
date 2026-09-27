@@ -5,6 +5,7 @@ import convert from "heic-convert";
 import { db, schema } from "../db/index.ts";
 import { requireAuth, type SessionUser } from "../lib/session.ts";
 import { extractFromPhoto, type ExtractedData } from "../lib/extract.ts";
+import { sniffImageType } from "../lib/image-sniff.ts";
 import { checkBadges } from "../lib/badges.ts";
 import { updateStreak } from "../lib/streak.ts";
 import { notifyNewUpload } from "../lib/line-notify.ts";
@@ -17,13 +18,6 @@ const DATA_DIR = process.env.DATABASE_PATH
   ? process.env.DATABASE_PATH.replace(/\/[^/]+$/, "")
   : "./data";
 const PHOTO_DIR = `${DATA_DIR}/photos`;
-
-const ACCEPTED_TYPES = [
-  "image/jpeg",
-  "image/png",
-  "image/heic",
-  "image/heif",
-];
 
 const reports = new Hono();
 
@@ -196,20 +190,15 @@ reports.post("/upload", async (c) => {
     );
   }
 
-  // Validate type
-  // Browsers send HEIC as various MIME types: image/heic, image/heif,
-  // application/octet-stream, or even empty string. Use filename as primary check.
-  const fileName = (photo.name || "").toLowerCase();
-  const ext = fileName.slice(fileName.lastIndexOf("."));
-  const acceptedExts = [".jpg", ".jpeg", ".png", ".heic", ".heif"];
-  const isAccepted =
-    ACCEPTED_TYPES.includes(photo.type) || acceptedExts.includes(ext);
+  const arrayBuffer = await photo.arrayBuffer();
+  const headerBytes = Buffer.from(arrayBuffer.slice(0, 12));
+  const sniffed = sniffImageType(headerBytes);
 
-  if (!isAccepted) {
+  if (sniffed === "unknown") {
     return c.html(
       <Layout title="錯誤" user={user}>
         <div class="flash flash-error">
-          只支援 JPEG、PNG、HEIC 格式（收到：type={photo.type || "empty"}, name={photo.name || "empty"}）
+          只支援 JPEG、PNG、HEIC 格式
         </div>
         <a href="/upload">重新上傳</a>
       </Layout>,
@@ -217,19 +206,17 @@ reports.post("/upload", async (c) => {
     );
   }
 
-  // Save photo (convert HEIC to JPEG)
   const timestamp = Date.now();
-  const arrayBuffer = await photo.arrayBuffer();
   const photoDir = PHOTO_DIR;
   mkdirSync(photoDir, { recursive: true });
 
-  const needsConvert = [".heic", ".heif"].includes(ext);
+  const needsConvert = sniffed === "heic";
 
   let filename: string;
   let photoPath: string;
+  let savedMediaType: "image/jpeg" | "image/png" = "image/jpeg";
 
   if (needsConvert) {
-    // Convert HEIC/HEIF → JPEG via heic-convert (pure JS, no native deps)
     filename = `${user.id}_${timestamp}.jpg`;
     photoPath = `${photoDir}/${filename}`;
     const jpegBuffer = await convert({
@@ -239,8 +226,9 @@ reports.post("/upload", async (c) => {
     });
     writeFileSync(photoPath, Buffer.from(jpegBuffer));
   } else {
-    const ext = photo.type === "image/png" ? "png" : "jpg";
-    filename = `${user.id}_${timestamp}.${ext}`;
+    const saveExt = sniffed === "png" ? "png" : "jpg";
+    savedMediaType = sniffed === "png" ? "image/png" : "image/jpeg";
+    filename = `${user.id}_${timestamp}.${saveExt}`;
     photoPath = `${photoDir}/${filename}`;
     writeFileSync(photoPath, Buffer.from(arrayBuffer));
   }
@@ -259,9 +247,8 @@ reports.post("/upload", async (c) => {
 
   // Extract data with AI
   try {
-    const { data, rawResponse } = await extractFromPhoto(photoPath);
+    const { data, rawResponse } = await extractFromPhoto(photoPath, { mediaType: savedMediaType });
 
-    // Update report with raw JSON and measured_at from AI
     db.update(schema.reports)
       .set({
         rawJson: rawResponse,
@@ -270,13 +257,13 @@ reports.post("/upload", async (c) => {
       .where(eq(schema.reports.id, result.id))
       .run();
 
-    // Store extracted data temporarily in report's rawJson for the confirm page
     return c.redirect(`/report/${result.id}/confirm`);
   } catch (error: any) {
+    console.error("AI extraction failed:", error.message);
     return c.html(
       <Layout title="分析失敗" user={user}>
         <div class="flash flash-error">
-          AI 分析失敗：{error.message}
+          AI 分析失敗，請再試一次或換一張照片
         </div>
         <p>你可以重新上傳，或聯繫管理員。</p>
         <a href="/upload">重新上傳</a>
@@ -341,9 +328,10 @@ reports.post("/upload/sample", async (c) => {
       .run();
     return c.redirect(`/report/${result.id}/confirm`);
   } catch (error: any) {
+    console.error("AI extraction failed:", error.message);
     return c.html(
       <Layout title="分析失敗" user={user}>
-        <div class="flash flash-error">AI 分析失敗：{error.message}</div>
+        <div class="flash flash-error">AI 分析失敗，請再試一次或換一張照片</div>
         <a href="/upload">重新上傳</a>
       </Layout>,
       500

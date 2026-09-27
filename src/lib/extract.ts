@@ -78,18 +78,28 @@ const EXTRACTION_PROMPT = `你是 InBody 體組成分析報告的數據提取專
   手寫數據、純文字截圖也回傳 false。
 - "device_type": "InBody 570" / "InBody 270" / "家庭式體脂計" / "app 截圖" / "未知" — 判斷設備類型描述`;
 
-export async function extractFromPhoto(photoPath: string): Promise<{
+export async function extractFromPhoto(photoPath: string, options?: {
+  temperature?: number;
+  mediaType?: "image/jpeg" | "image/png";
+}): Promise<{
   data: ExtractedData;
   rawResponse: string;
 }> {
   const imageBuffer = readFileSync(photoPath);
   const base64 = imageBuffer.toString("base64");
-  const ext = photoPath.toLowerCase().endsWith(".png") ? "png" : "jpeg";
-  const mediaType = `image/${ext}` as "image/jpeg" | "image/png";
+
+  const MAX_BASE64_BYTES = 10 * 1024 * 1024;
+  if (base64.length > MAX_BASE64_BYTES) {
+    throw new Error("照片太大，請改用拍照或換一張照片");
+  }
+
+  const mediaType = options?.mediaType
+    ?? (photoPath.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg") as "image/jpeg" | "image/png";
 
   const response = await client.messages.create({
     model: "claude-sonnet-4-5-20250929",
     max_tokens: 1024,
+    ...(options?.temperature !== undefined && { temperature: options.temperature }),
     messages: [
       {
         role: "user",
