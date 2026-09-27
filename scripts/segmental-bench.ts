@@ -15,7 +15,7 @@ const COST_LIMIT_USD = Number(process.env.COST_LIMIT_USD ?? "0.6");
 const cost = (u: { input_tokens: number; output_tokens: number }) =>
   (u.input_tokens * 3 + u.output_tokens * 15) / 1_000_000;
 
-type Run = { image: string; run: number; reading: Reading | null; error?: string; costUsd: number };
+type Run = { image: string; run: number; reading: Reading | null; full?: Record<string, unknown>; error?: string; costUsd: number };
 
 async function runBench(label: string) {
   const runs: Run[] = [];
@@ -33,7 +33,7 @@ async function runBench(label: string) {
           const { data, usage } = await extractFromPhoto(join(dir, f), { temperature: 0 });
           const c = usage ? cost(usage) : 0;
           total += c;
-          runs.push({ image, run, reading: { segmental_lean: data.segmental_lean, segmental_fat: data.segmental_fat }, costUsd: c });
+          runs.push({ image, run, reading: { segmental_lean: data.segmental_lean, segmental_fat: data.segmental_fat }, full: data as unknown as Record<string, unknown>, costUsd: c });
           console.log(`${image} run${run} ok ($${total.toFixed(4)})`);
         } catch (e) {
           runs.push({ image, run, reading: null, error: String(e), costUsd: 0 });
