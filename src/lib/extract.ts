@@ -46,7 +46,7 @@ const EXTRACTION_PROMPT = `你是 InBody 體組成分析報告的數據提取專
   "total_body_water": 40.2,            // 總體水分 (L)
   "visceral_fat_level": 8,             // 內臟脂肪等級 (整數)
   "basal_metabolic_rate": 1650,        // 基礎代謝率 (kcal, 整數)
-  "inbody_score": 75,                  // InBody 分數 (整數)
+  "inbody_score": 75,                  // InBody 分數 (整數)；InBody 230 印作「健身評分」
   "segmental_lean": {                  // 節段肌肉分析 (kg)，若報告上沒有則回傳 null
     "right_arm": 3.2,
     "left_arm": 3.1,
@@ -69,6 +69,10 @@ const EXTRACTION_PROMPT = `你是 InBody 體組成分析報告的數據提取專
 - 區分公斤 (kg) 和磅 (lbs)，所有數值統一用公斤
 - InBody 報告有多種型號（270/370/570/770），版面不同但核心欄位相同
 - 若照片模糊或部分遮擋導致無法確認某個數值，寧可回傳 null 也不要猜
+- 報告上**沒有印出**的欄位一律回傳 null，不要從其他數字推算或借用（例如 InBody 230 沒有內臟脂肪等級，visceral_fat_level 就回傳 null）
+- 部位別（節段）數值的左右，**以報告上印的左右標示為準**：InBody 230 的「部位別肌肉量」「部位別脂肪量」人形圖，頁面**左半邊**那一欄旁邊印「左側」、**右半邊**印「右側」⇒ 頁面左欄的手臂/腿 → left_arm / left_leg，頁面右欄 → right_arm / right_leg。其他型號若以文字標示（左臂、右腿、Left Arm…）就照文字。不要依人體解剖方向（面對面時左右相反）做鏡像換算
+- 部位別每一格各自讀：左右兩格的數值常常很接近但不一定相同，不要把一邊的數值抄到另一邊；軀幹也要讀軀幹那一格自己的數值
+- segmental_fat 每格有百分比 (%) 和公斤 (kg) 兩個數字時，取百分比
 - 只回傳 JSON，不要加任何說明文字
 
 額外判斷（加在 JSON 最外層）：
@@ -84,6 +88,7 @@ export async function extractFromPhoto(photoPath: string, options?: {
 }): Promise<{
   data: ExtractedData;
   rawResponse: string;
+  usage?: { input_tokens: number; output_tokens: number };
 }> {
   const imageBuffer = readFileSync(photoPath);
   const base64 = imageBuffer.toString("base64");
@@ -124,5 +129,9 @@ export async function extractFromPhoto(photoPath: string, options?: {
   }
 
   const data = JSON.parse(jsonMatch[0]) as ExtractedData;
-  return { data, rawResponse: rawText };
+  return {
+    data,
+    rawResponse: rawText,
+    usage: { input_tokens: response.usage.input_tokens, output_tokens: response.usage.output_tokens },
+  };
 }
