@@ -47,6 +47,7 @@ function getMemberRows(
     return db
       .select({
         measuredAt: schema.reports.measuredAt,
+        editedAt: schema.reports.editedAt,
         bodyFatPct: schema.measurements.bodyFatPct,
         skeletalMuscle: schema.measurements.skeletalMuscle,
         inbodyScore: schema.measurements.inbodyScore,
@@ -67,6 +68,7 @@ function getMemberRows(
   return db
     .select({
       measuredAt: schema.reports.measuredAt,
+      editedAt: schema.reports.editedAt,
       bodyFatPct: schema.measurements.bodyFatPct,
       skeletalMuscle: schema.measurements.skeletalMuscle,
       inbodyScore: schema.measurements.inbodyScore,
@@ -173,6 +175,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     badgeCount: number;
     submissionCount: number;
     hasHidden: boolean;
+    edited: boolean;
     isImprovement: boolean;
   };
 
@@ -259,6 +262,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       count: visibleRows.length,
       badgeCount: getBadgeCount(m.userId),
       submissionCount: theirSubCount,
+      edited: visibleRows.some((r) => r.editedAt != null),
       hasHidden: computeHasHidden(rows, { isMirror, isEnded, isMe: m.userId === user.id, myLatestDate }),
       isImprovement,
     });
@@ -371,6 +375,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       badgeCount: r.badgeCount,
       submissionCount: r.submissionCount,
       hasHidden: r.hasHidden,
+      edited: r.edited,
       isImprovement: r.isImprovement,
     })),
     mvp,

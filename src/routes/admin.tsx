@@ -312,6 +312,9 @@ admin.post("/admin/user/:id/delete", (c) => {
 
   // Delete measurements
   for (const r of reports) {
+    db.delete(schema.reportEdits)
+      .where(eq(schema.reportEdits.reportId, r.id))
+      .run();
     db.delete(schema.measurements)
       .where(eq(schema.measurements.reportId, r.id))
       .run();

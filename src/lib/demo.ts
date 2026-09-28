@@ -42,6 +42,7 @@ function resetDemoData(userId: number) {
     .map((r) => r.id);
 
   for (const rid of reportIds) {
+    db.delete(schema.reportEdits).where(eq(schema.reportEdits.reportId, rid)).run();
     db.delete(schema.measurements).where(eq(schema.measurements.reportId, rid)).run();
   }
   db.delete(schema.reports).where(eq(schema.reports.userId, userId)).run();
