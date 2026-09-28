@@ -170,7 +170,10 @@ history.post("/report/:id/delete", (c) => {
 
   if (!report) return c.redirect("/reports");
 
-  // Delete measurement first (FK constraint)
+  // Delete edit audit rows + measurement first (FK constraint)
+  db.delete(schema.reportEdits)
+    .where(eq(schema.reportEdits.reportId, reportId))
+    .run();
   db.delete(schema.measurements)
     .where(eq(schema.measurements.reportId, reportId))
     .run();

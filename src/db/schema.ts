@@ -26,7 +26,22 @@ export const reports = sqliteTable("reports", {
   confirmed: integer("confirmed", { mode: "boolean" }).default(false),
   isInbody: integer("is_inbody", { mode: "boolean" }),
   deviceType: text("device_type"),
+  editedAt: text("edited_at"), // set when uploader edits a confirmed report
   createdAt: text("created_at").default("(datetime('now'))"),
+});
+
+// Audit log: one row per edit of a confirmed report (only changed fields)
+export const reportEdits = sqliteTable("report_edits", {
+  id: integer("id").primaryKey({ autoIncrement: true }),
+  reportId: integer("report_id")
+    .notNull()
+    .references(() => reports.id),
+  userId: integer("user_id")
+    .notNull()
+    .references(() => users.id),
+  beforeJson: text("before_json").notNull(),
+  afterJson: text("after_json").notNull(),
+  editedAt: text("edited_at").$defaultFn(() => new Date().toISOString()),
 });
 
 export const measurements = sqliteTable("measurements", {
