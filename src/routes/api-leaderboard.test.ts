@@ -51,7 +51,7 @@ describe("edited marker is visible to other members", () => {
   });
 });
 
-describe("body fat score is relative decrease", () => {
+describe("body fat score is absolute point change", () => {
   function setupRoom8() {
     // Create users in specific order: Chang first (owner), then others
     // makeUser order = userId order = SQLite default read order for ties
@@ -97,33 +97,35 @@ describe("body fat score is relative decrease", () => {
     return { room, chang, xuanyu, yinyin, jiwei, yuqing, chia, zhiwei, kevin, jeffrey };
   }
 
-  test("A: ranking order matches relative decrease", async () => {
+  test("A: ranking order matches absolute point change", async () => {
     const { room, chang } = setupRoom8();
     const res = await app.request(`/api/rooms/${room.slug}/leaderboard`, {
       headers: await authHeader(chang.id),
     });
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(body.rankings.map((r: any) => r.name)).toEqual([
-      "宣羽", "茵茵", "Chang", "chia", "邱郁晴", "紀維", "張志瑋", "kevin", "Jeffrey",
-    ]);
+    const names = body.rankings.map((r: any) => r.name);
+    // 紀維 (-0.6) ahead of chia (-0.5); relative scoring would flip them
+    expect(names.slice(0, 4)).toEqual(["宣羽", "茵茵", "Chang", "紀維"]);
+    expect(names.slice(4, 6).sort()).toEqual(["chia", "邱郁晴"].sort()); // tied at -0.5
+    expect(names.slice(6)).toEqual(["張志瑋", "kevin", "Jeffrey"]);
   });
 
-  test("B: diff values are relative percentages with 2 decimals", async () => {
+  test("B: diff values are absolute points with 1 decimal", async () => {
     const { room, chang } = setupRoom8();
     const res = await app.request(`/api/rooms/${room.slug}/leaderboard`, {
       headers: await authHeader(chang.id),
     });
     const body = await res.json();
     const diffs = body.rankings.map((r: any) => r.diff);
-    expect(diffs).toEqual([-10.93, -6.43, -4.01, -1.51, -1.46, -1.41, -1.39, -1.12, 5.92]);
+    expect(diffs).toEqual([-4.1, -1.6, -1.1, -0.6, -0.5, -0.5, -0.4, -0.3, 1.8]);
 
     const rawDiffs = body.rankings.map((r: any) => r.rawDiff);
-    expect(rawDiffs).toEqual([-10.93, -6.43, -4.01, -1.51, -1.46, -1.41, -1.39, -1.12, 5.92]);
+    expect(rawDiffs).toEqual([-4.1, -1.6, -1.1, -0.6, -0.5, -0.5, -0.4, -0.3, 1.8]);
 
-    expect(body.mvp.gain).toBe(-10.93);
-    expect(body.scoring).toBe("relative");
-    expect(body.diffDecimals).toBe(2);
+    expect(body.mvp.gain).toBe(-4.1);
+    expect(body.scoring).toBe("absolute");
+    expect(body.diffDecimals).toBe(1);
 
     // Predictions carry metric field
     if (body.predictions?.length > 0) {
@@ -131,15 +133,14 @@ describe("body fat score is relative decrease", () => {
     }
   });
 
-  test("C: weight multiplier applies to relative diff", async () => {
+  test("C: weight multiplier applies to absolute diff", async () => {
     const { room, chang, xuanyu, jeffrey } = setupRoom8();
-    // Set multipliers
     db.update(schema.roomMembers)
-      .set({ weightMultiplier: 1.5 })
+      .set({ weightMultiplier: 2 })
       .where(and(eq(schema.roomMembers.roomId, room.id), eq(schema.roomMembers.userId, xuanyu.id)))
       .run();
     db.update(schema.roomMembers)
-      .set({ weightMultiplier: 1.5 })
+      .set({ weightMultiplier: 2 })
       .where(and(eq(schema.roomMembers.roomId, room.id), eq(schema.roomMembers.userId, jeffrey.id)))
       .run();
 
@@ -149,12 +150,12 @@ describe("body fat score is relative decrease", () => {
     const body = await res.json();
     const byName = Object.fromEntries(body.rankings.map((r: any) => [r.name, r]));
 
-    expect(byName["宣羽"].rawDiff).toBe(-10.93);
-    expect(byName["宣羽"].weightedDiff).toBe(-16.4);
+    expect(byName["宣羽"].rawDiff).toBe(-4.1);
+    expect(byName["宣羽"].weightedDiff).toBe(-8.2);
     expect(byName["宣羽"].isImprovement).toBe(true);
 
-    expect(byName["Jeffrey"].rawDiff).toBe(5.92);
-    expect(byName["Jeffrey"].weightedDiff).toBe(3.95);
+    expect(byName["Jeffrey"].rawDiff).toBe(1.8);
+    expect(byName["Jeffrey"].weightedDiff).toBe(0.9);
     expect(byName["Jeffrey"].isImprovement).toBe(false);
   });
 
@@ -215,31 +216,7 @@ describe("body fat score is relative decrease", () => {
     });
     const body = await res.json();
     const xuanyuEntry = body.rankings.find((r: any) => r.name === "宣羽E");
-    // (35.0 - 37.5) / 37.5 * 100 = -6.6667 → toFixed(2) → -6.67
-    expect(xuanyuEntry.diff).toBe(-6.67);
-  });
-
-  test("F: initial bodyFatPct 0 excluded from rankings", async () => {
-    const owner = makeUser("owner-f");
-    const zero = makeUser("zero-bf");
-    const room = makeRoom(owner.id, {
-      visibilityMode: "open",
-      startDate: "2026-07-01",
-      endDate: "2026-12-31",
-    });
-    addMember(room.id, zero.id);
-
-    makeConfirmedReport(owner.id, "2026-07-01", { bodyFatPct: 25 });
-    makeConfirmedReport(owner.id, "2026-09-01", { bodyFatPct: 24 });
-    makeConfirmedReport(zero.id, "2026-07-01", { bodyFatPct: 0 });
-    makeConfirmedReport(zero.id, "2026-09-01", { bodyFatPct: 20 });
-
-    const res = await app.request(`/api/rooms/${room.slug}/leaderboard`, {
-      headers: await authHeader(owner.id),
-    });
-    expect(res.status).toBe(200);
-    const body = await res.json();
-    const names = body.rankings.map((r: any) => r.name);
-    expect(names).not.toContain("zero-bf");
+    // 35.0 - 37.5 = -2.5 (the 09-20 report is hidden from owner)
+    expect(xuanyuEntry.diff).toBe(-2.5);
   });
 });

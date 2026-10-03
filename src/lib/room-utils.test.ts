@@ -160,14 +160,14 @@ describe("applyMultiplier", () => {
 });
 
 describe("metricDiff", () => {
-  test("bodyFatPct: relative decrease (37.5 → 33.4)", () => {
-    expect(metricDiff("bodyFatPct", 37.5, 33.4)).toBeCloseTo(-10.9333, 3);
+  test("bodyFatPct: absolute points (37.5 → 33.4)", () => {
+    expect(metricDiff("bodyFatPct", 37.5, 33.4)).toBeCloseTo(-4.1, 3);
   });
-  test("bodyFatPct: relative increase (30.4 → 32.2)", () => {
-    expect(metricDiff("bodyFatPct", 30.4, 32.2)).toBeCloseTo(5.9211, 3);
+  test("bodyFatPct: absolute increase (30.4 → 32.2)", () => {
+    expect(metricDiff("bodyFatPct", 30.4, 32.2)).toBeCloseTo(1.8, 3);
   });
-  test("bodyFatPct: exact 10% decrease (30 → 27)", () => {
-    expect(metricDiff("bodyFatPct", 30, 27)).toBeCloseTo(-10, 3);
+  test("bodyFatPct: 30 → 27 is -3 points, not -10%", () => {
+    expect(metricDiff("bodyFatPct", 30, 27)).toBeCloseTo(-3, 3);
   });
   test("skeletalMuscle: absolute diff (30 → 31.2)", () => {
     expect(metricDiff("skeletalMuscle", 30, 31.2)).toBeCloseTo(1.2, 3);
@@ -181,17 +181,11 @@ describe("metricDiff", () => {
   test("bodyFatPct: last is null → null", () => {
     expect(metricDiff("bodyFatPct", 20, null)).toBeNull();
   });
-  test("bodyFatPct: first is 0 → null", () => {
-    expect(metricDiff("bodyFatPct", 0, 20)).toBeNull();
-  });
-  test("bodyFatPct: first is negative → null", () => {
-    expect(metricDiff("bodyFatPct", -1, 20)).toBeNull();
-  });
 });
 
 describe("diffDecimals", () => {
-  test("bodyFatPct → 2", () => {
-    expect(diffDecimals("bodyFatPct")).toBe(2);
+  test("bodyFatPct → 1 (InBody reports 0.1 precision)", () => {
+    expect(diffDecimals("bodyFatPct")).toBe(1);
   });
   test("skeletalMuscle → 1", () => {
     expect(diffDecimals("skeletalMuscle")).toBe(1);

@@ -342,7 +342,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       metric,
       metricLabel: cfg.label,
       metricUnit: cfg.unit,
-      scoring: metric === "bodyFatPct" ? "relative" as const : "absolute" as const,
+      scoring: "absolute" as const,
       diffDecimals: dec,
       rankings: firstOnlyRankings,
       room: {
@@ -363,7 +363,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     metricLabel: cfg.label,
     metricUnit: cfg.unit,
     lowerIsBetter: cfg.lowerIsBetter,
-    scoring: metric === "bodyFatPct" ? "relative" as const : "absolute" as const,
+    scoring: "absolute" as const,
     diffDecimals: dec,
     rankType,
     rankRange,

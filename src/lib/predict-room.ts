@@ -135,19 +135,9 @@ export function predictAllInRoom(
     const predictedValue = Math.round((reg.slope * endDays + reg.intercept) * 10) / 10;
     const firstMetricVal = rows[0]![metricField]!;
 
-    if (metricField === "bodyFatPct" && firstMetricVal <= 0) continue;
-
     const dec = diffDecimals(metricField);
-    let predictedChange: number;
-    let sortKey: number;
-    if (metricField === "bodyFatPct") {
-      predictedChange = Number(((predictedValue - firstMetricVal) / firstMetricVal * 100).toFixed(dec));
-      const rawPredicted = reg.slope * endDays + reg.intercept;
-      sortKey = ((rawPredicted - firstMetricVal) / firstMetricVal) * 100;
-    } else {
-      predictedChange = Number((predictedValue - firstMetricVal).toFixed(dec));
-      sortKey = predictedValue - firstMetricVal;
-    }
+    const predictedChange = Number((predictedValue - firstMetricVal).toFixed(dec));
+    const sortKey = predictedValue - firstMetricVal;
 
     predictions.push({
       userId: member.userId,
