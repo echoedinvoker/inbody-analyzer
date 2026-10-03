@@ -4,6 +4,8 @@ import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { nanoid } from "../lib/nanoid.ts";
 import { getStreak, getRoomStreak, updateRoomStreak, recalcRoomStreak } from "../lib/streak.ts";
+import { isRoomEnded } from "../lib/room-utils.ts";
+import { computeFinalStandings } from "../lib/standings.ts";
 
 const rooms = new Hono();
 
@@ -1206,7 +1208,114 @@ rooms.delete("/api/rooms/:slug/forfeits/:id", async (c) => {
   ).get();
   if (!forfeit) return c.json({ error: "Forfeit not found" }, 404);
 
-  db.delete(schema.roomForfeits).where(eq(schema.roomForfeits.id, forfeitId)).run();
+  db.transaction((tx) => {
+    tx.delete(schema.roomRewardSettlements)
+      .where(and(
+        eq(schema.roomRewardSettlements.roomId, room.id),
+        eq(schema.roomRewardSettlements.forfeitId, forfeitId)
+      ))
+      .run();
+    tx.delete(schema.roomForfeits).where(eq(schema.roomForfeits.id, forfeitId)).run();
+  });
+  return c.json({ ok: true });
+});
+
+// --- Settlement API ---
+
+rooms.put("/api/rooms/:slug/settlements", async (c) => {
+  const user = requireAuth(c);
+  const { slug } = c.req.param();
+  const body = await c.req.json();
+  const { userId: targetUserId, forfeitId: targetForfeitId, settled } = body;
+
+  const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  if (!isRoomEnded(room.endDate)) {
+    return c.json({ error: "Settlements available after competition ends" }, 409);
+  }
+
+  const hasUserId = targetUserId !== undefined && targetUserId !== null;
+  const hasForfeitId = targetForfeitId !== undefined && targetForfeitId !== null;
+  if (hasUserId && hasForfeitId) return c.json({ error: "Provide userId or forfeitId, not both" }, 400);
+  if (!hasUserId && !hasForfeitId) return c.json({ error: "Provide userId or forfeitId" }, 400);
+
+  const viewerMembership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, user.id),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!viewerMembership) return c.json({ error: "Not an active member" }, 403);
+
+  const isOwner = viewerMembership.role === "owner";
+
+  if (hasForfeitId) {
+    if (!isOwner) return c.json({ error: "Only owner can settle forfeits" }, 403);
+    const forfeit = db.select().from(schema.roomForfeits).where(
+      and(eq(schema.roomForfeits.id, targetForfeitId), eq(schema.roomForfeits.roomId, room.id))
+    ).get();
+    if (!forfeit) return c.json({ error: "Forfeit not found in this room" }, 404);
+    if (forfeit.userId != null) return c.json({ error: "Use userId for member forfeits" }, 400);
+
+    const standings = computeFinalStandings(room.id);
+    const entry = standings.find(s => s.forfeitId === targetForfeitId);
+    if (!entry) return c.json({ error: "Target not in final standings" }, 404);
+
+    if (settled) {
+      db.insert(schema.roomRewardSettlements).values({
+        roomId: room.id,
+        userId: null,
+        forfeitId: targetForfeitId,
+        zoneAtMark: entry.zone,
+        markedBy: user.id,
+        markedAt: new Date().toISOString(),
+      }).onConflictDoUpdate({
+        target: [schema.roomRewardSettlements.roomId, schema.roomRewardSettlements.forfeitId],
+        set: {
+          zoneAtMark: entry.zone,
+          markedBy: user.id,
+          markedAt: new Date().toISOString(),
+        },
+      }).run();
+    } else {
+      db.delete(schema.roomRewardSettlements).where(
+        and(eq(schema.roomRewardSettlements.roomId, room.id), eq(schema.roomRewardSettlements.forfeitId, targetForfeitId))
+      ).run();
+    }
+    return c.json({ ok: true });
+  }
+
+  if (!isOwner && targetUserId !== user.id) {
+    return c.json({ error: "Can only settle your own" }, 403);
+  }
+
+  const standings = computeFinalStandings(room.id);
+  const entry = standings.find(s => s.userId === targetUserId && !s.forfeited);
+  if (!entry) return c.json({ error: "Target not in final standings" }, 404);
+
+  if (settled) {
+    db.insert(schema.roomRewardSettlements).values({
+      roomId: room.id,
+      userId: targetUserId,
+      forfeitId: null,
+      zoneAtMark: entry.zone,
+      markedBy: user.id,
+      markedAt: new Date().toISOString(),
+    }).onConflictDoUpdate({
+      target: [schema.roomRewardSettlements.roomId, schema.roomRewardSettlements.userId],
+      set: {
+        zoneAtMark: entry.zone,
+        markedBy: user.id,
+        markedAt: new Date().toISOString(),
+      },
+    }).run();
+  } else {
+    db.delete(schema.roomRewardSettlements).where(
+      and(eq(schema.roomRewardSettlements.roomId, room.id), eq(schema.roomRewardSettlements.userId, targetUserId))
+    ).run();
+  }
   return c.json({ ok: true });
 });
 

@@ -270,6 +270,27 @@ export const roomForfeits = sqliteTable(
   })
 );
 
+export const roomRewardSettlements = sqliteTable(
+  "room_reward_settlements",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roomId: integer("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    userId: integer("user_id").references(() => users.id),
+    forfeitId: integer("forfeit_id").references(() => roomForfeits.id),
+    zoneAtMark: text("zone_at_mark").notNull(),
+    markedBy: integer("marked_by")
+      .notNull()
+      .references(() => users.id),
+    markedAt: text("marked_at").notNull(),
+  },
+  (table) => ({
+    roomUserUnique: unique().on(table.roomId, table.userId),
+    roomForfeitUnique: unique().on(table.roomId, table.forfeitId),
+  })
+);
+
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   userId: integer("user_id")

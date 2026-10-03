@@ -5,6 +5,7 @@ import { requireAuth } from "../lib/session.ts";
 import { getBadgeCount } from "../lib/badges.ts";
 import { predictAllInRoom } from "../lib/predict-room.ts";
 import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember, applyMultiplier, metricDiff, diffDecimals, competitionRanks, winnerCutoff, zoneOf, rankKey, type MetricKey } from "../lib/room-utils.ts";
+import { computeFinalStandings } from "../lib/standings.ts";
 
 const apiLeaderboard = new Hono();
 
@@ -368,6 +369,33 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     }));
   } catch {}
 
+  // Settlement data (only for ended + official metric)
+  const officialMetric: MetricKey = room.mode === "bulk" ? "skeletalMuscle" : "bodyFatPct";
+  const isOfficialMetric = metric === officialMetric;
+  let settlementMap = new Map<string, { zoneAtMark: string; markedBy: number; markedAt: string }>();
+  let viewerIsOwner = false;
+
+  if (isEnded && isOfficialMetric) {
+    const settlements = db
+      .select()
+      .from(schema.roomRewardSettlements)
+      .where(eq(schema.roomRewardSettlements.roomId, room.id))
+      .all();
+    for (const s of settlements) {
+      const key = s.userId ? `u:${s.userId}` : `f:${s.forfeitId}`;
+      settlementMap.set(key, { zoneAtMark: s.zoneAtMark, markedBy: s.markedBy, markedAt: s.markedAt });
+    }
+    const ownerMembership = db.select().from(schema.roomMembers).where(
+      and(
+        eq(schema.roomMembers.roomId, room.id),
+        eq(schema.roomMembers.userId, user.id),
+        eq(schema.roomMembers.role, "owner"),
+        isNull(schema.roomMembers.leftAt)
+      )
+    ).get();
+    viewerIsOwner = !!ownerMembership;
+  }
+
   // Progressive visibility for mirror mode: 0 submissions sees first entry only
   if (isMirror && !myLatestDate && !isEnded) {
     const maxSubCount = Math.max(0, ...[...subCountMap.values()]);
@@ -417,50 +445,105 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     winnerCutoff: wCutoff,
     rankType,
     rankRange,
-    rankings: [
-      ...rankings.map((r, i) => ({
-        rank: ranks[i],
-        userId: r.userId,
-        name: r.name,
-        isMe: r.userId === user.id,
-        entryKey: `u:${r.userId}`,
-        forfeited: false,
-        zone: zoneOf(ranks[i], totalParticipants),
-        firstVal: r.firstVal,
-        lastVal: r.lastVal,
-        diff: Number(r.weightedDiff.toFixed(dec)),
-        rawDiff: Number(r.rawDiff.toFixed(dec)),
-        weightedDiff: Number(r.weightedDiff.toFixed(dec)),
-        multiplier: r.multiplier,
-        count: r.count,
-        badgeCount: r.badgeCount,
-        submissionCount: r.submissionCount,
-        hasHidden: r.hasHidden,
-        edited: r.edited,
-        isImprovement: r.isImprovement,
-      })),
-      ...activeForfeitEntries.map(f => ({
-        rank: forfeitRank,
-        userId: f.userId,
-        name: f.userId ? f.userName : f.name,
-        isMe: f.userId === user.id,
-        entryKey: f.userId ? `u:${f.userId}` : `f:${f.id}`,
-        forfeited: true,
-        zone: zoneOf(forfeitRank, totalParticipants) as "winner" | "loser",
-        firstVal: null,
-        lastVal: null,
-        diff: null,
-        rawDiff: null,
-        weightedDiff: null,
-        multiplier: 1,
-        count: 0,
-        badgeCount: 0,
-        submissionCount: 0,
-        hasHidden: false,
-        edited: false,
-        isImprovement: false,
-      })),
-    ],
+    ...(isEnded && isOfficialMetric ? { viewerIsOwner } : {}),
+    rankings: (() => {
+      const standings = isEnded && isOfficialMetric ? computeFinalStandings(room.id) : null;
+      function getSettlement(entryKey: string, currentZone: string, isGhostEntry: boolean) {
+        if (!isEnded || !isOfficialMetric) return undefined;
+        if (isGhostEntry) return null;
+        const s = settlementMap.get(entryKey);
+        if (!s) return { settled: false, stale: false, markedAt: null, markedByOwner: false };
+        const stale = s.zoneAtMark !== currentZone;
+        const standingsEntry = standings?.find(e => e.entryKey === entryKey);
+        const targetUserId = standingsEntry?.userId;
+        return {
+          settled: !stale,
+          stale,
+          markedAt: s.markedAt,
+          markedByOwner: targetUserId != null ? s.markedBy !== targetUserId : true,
+        };
+      }
+      return [
+        ...rankings.map((r, i) => {
+          const entryKey = `u:${r.userId}`;
+          const zone = zoneOf(ranks[i], totalParticipants);
+          return {
+            rank: ranks[i],
+            userId: r.userId,
+            name: r.name,
+            isMe: r.userId === user.id,
+            entryKey,
+            forfeited: false,
+            zone,
+            firstVal: r.firstVal,
+            lastVal: r.lastVal,
+            diff: Number(r.weightedDiff.toFixed(dec)),
+            rawDiff: Number(r.rawDiff.toFixed(dec)),
+            weightedDiff: Number(r.weightedDiff.toFixed(dec)),
+            multiplier: r.multiplier,
+            count: r.count,
+            badgeCount: r.badgeCount,
+            submissionCount: r.submissionCount,
+            hasHidden: r.hasHidden,
+            edited: r.edited,
+            isImprovement: r.isImprovement,
+            settlement: getSettlement(entryKey, zone, r.isGhost),
+          };
+        }),
+        ...activeForfeitEntries.map(f => {
+          const entryKey = f.userId ? `u:${f.userId}` : `f:${f.id}`;
+          const zone = zoneOf(forfeitRank, totalParticipants) as "winner" | "loser";
+          return {
+            rank: forfeitRank,
+            userId: f.userId,
+            name: f.userId ? f.userName : f.name,
+            isMe: f.userId === user.id,
+            entryKey,
+            forfeited: true,
+            zone,
+            firstVal: null,
+            lastVal: null,
+            diff: null,
+            rawDiff: null,
+            weightedDiff: null,
+            multiplier: 1,
+            count: 0,
+            badgeCount: 0,
+            submissionCount: 0,
+            hasHidden: false,
+            edited: false,
+            isImprovement: false,
+            settlement: getSettlement(entryKey, zone, false),
+          };
+        }),
+      ];
+    })(),
+    ...(isEnded && isOfficialMetric ? (() => {
+      const allEntries = [
+        ...rankings.map((r, i) => {
+          const entryKey = `u:${r.userId}`;
+          const zone = zoneOf(ranks[i], totalParticipants);
+          const s = settlementMap.get(entryKey);
+          if (r.isGhost) return null;
+          return { settled: !!(s && s.zoneAtMark === zone) };
+        }).filter(Boolean),
+        ...activeForfeitEntries.map(f => {
+          const entryKey = f.userId ? `u:${f.userId}` : `f:${f.id}`;
+          const zone = zoneOf(forfeitRank, totalParticipants);
+          const s = settlementMap.get(entryKey);
+          return { settled: !!(s && s.zoneAtMark === zone) };
+        }),
+      ];
+      const total = allEntries.length;
+      const settledCount = allEntries.filter(e => e && e.settled).length;
+      return {
+        settlementSummary: {
+          total,
+          settled: settledCount,
+          allSettled: total > 0 && settledCount === total,
+        },
+      };
+    })() : {}),
     mvp,
     predictions,
     trendData,

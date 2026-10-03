@@ -101,6 +101,7 @@ export function addForfeit(roomId: number, opts: { userId?: number; name?: strin
 }
 
 export function resetDb() {
+  db.delete(schema.roomRewardSettlements).run();
   db.delete(schema.roomAdviceCache).run();
   db.delete(schema.roomStreaks).run();
   db.delete(schema.roomSubmissionRejections).run();
