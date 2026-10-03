@@ -4,7 +4,7 @@ import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { getBadgeCount } from "../lib/badges.ts";
 import { predictAllInRoom } from "../lib/predict-room.ts";
-import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember, applyMultiplier, metricDiff, diffDecimals, type MetricKey } from "../lib/room-utils.ts";
+import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember, applyMultiplier, metricDiff, diffDecimals, competitionRanks, winnerCutoff, zoneOf, rankKey, type MetricKey } from "../lib/room-utils.ts";
 
 const apiLeaderboard = new Hono();
 
@@ -156,6 +156,27 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     )
     .all();
 
+  // Load forfeits for this room
+  const forfeitRows = db
+    .select({
+      id: schema.roomForfeits.id,
+      userId: schema.roomForfeits.userId,
+      name: schema.roomForfeits.name,
+      userName: schema.users.name,
+    })
+    .from(schema.roomForfeits)
+    .leftJoin(schema.users, eq(schema.roomForfeits.userId, schema.users.id))
+    .where(eq(schema.roomForfeits.roomId, room.id))
+    .all();
+
+  const activeMemberIds = new Set(members.map(m => m.userId));
+  const forfeitedUserIds = new Set<number>();
+  for (const f of forfeitRows) {
+    if (f.userId != null && activeMemberIds.has(f.userId)) {
+      forfeitedUserIds.add(f.userId);
+    }
+  }
+
   let maxOtherDate = "";
   let totalHiddenCount = 0;
 
@@ -169,6 +190,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     rawDiff: number;
     weightedDiff: number;
     diff: number;
+    sortKey: number;
     count: number;
     badgeCount: number;
     submissionCount: number;
@@ -185,9 +207,11 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
   }> = [];
   const minSubs = room.minSubmissions ?? 3;
   const cfg = METRIC_CONFIG[metric]!;
+  const dec = diffDecimals(metric);
 
   for (const m of members) {
     if (m.isGhost && m.userId !== user.id) continue;
+    if (forfeitedUserIds.has(m.userId)) continue;
 
     const rows = getMemberRows(m.userId, room.id, room);
     const theirSubCount = subCountMap.get(m.userId) ?? rows.length;
@@ -246,8 +270,9 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     const multiplier = m.weightMultiplier ?? 1.0;
     const rawDiffVal = metricDiff(metric, firstVal, lastVal);
     if (rawDiffVal == null) continue;
-    const rawDiff = rawDiffVal;
-    const { value: weightedDiff, isImprovement } = applyMultiplier(rawDiff, multiplier, cfg.lowerIsBetter);
+    const rawRounded = rankKey(rawDiffVal, dec);
+    const { value: weightedDiff, isImprovement } = applyMultiplier(rawRounded, multiplier, cfg.lowerIsBetter);
+    const sortKey = rankKey(weightedDiff, dec);
 
     rankings.push({
       userId: m.userId,
@@ -256,9 +281,10 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       multiplier,
       firstVal,
       lastVal,
-      rawDiff,
+      rawDiff: rawRounded,
       weightedDiff,
       diff: weightedDiff,
+      sortKey,
       count: visibleRows.length,
       badgeCount: getBadgeCount(m.userId),
       submissionCount: theirSubCount,
@@ -268,27 +294,49 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     });
   }
 
-  rankings.sort((a, b) => (cfg.lowerIsBetter ? a.weightedDiff - b.weightedDiff : b.weightedDiff - a.weightedDiff));
+  rankings.sort((a, b) => {
+    const cmp = cfg.lowerIsBetter ? a.sortKey - b.sortKey : b.sortKey - a.sortKey;
+    if (cmp !== 0) return cmp;
+    return a.userId - b.userId;
+  });
+
+  const sortKeys = rankings.map(r => r.sortKey);
+  const ranks = competitionRanks(sortKeys);
+
+  const scoredCount = rankings.length;
+  const forfeitRank = scoredCount + 1;
+  const activeForfeitEntries = forfeitRows.filter(f => {
+    if (f.userId != null) {
+      if (!activeMemberIds.has(f.userId)) return false;
+      const member = members.find(m => m.userId === f.userId);
+      return member && !member.isGhost;
+    }
+    return true;
+  });
+
+  const totalParticipants = scoredCount + activeForfeitEntries.length;
+  const wCutoff = winnerCutoff(totalParticipants);
+  const viewerIsForfeited = forfeitedUserIds.has(user.id);
 
   // Rank type and range
   const resolved = resolveRankType({ isMirror, isEnded, myLatestDate, maxOtherDate });
-  let rankType: "real" | "estimated" = resolved.rankType;
+  let rankType: "real" | "estimated" = viewerIsForfeited ? "real" : resolved.rankType;
   let rankRange: { min: number; max: number } | null = null;
 
-  if (resolved.shouldComputeRange) {
+  if (!viewerIsForfeited && resolved.shouldComputeRange) {
     const myRankEntry = rankings.find((r) => r.userId === user.id);
     if (myRankEntry) {
       const myIdx = rankings.indexOf(myRankEntry);
+      const myRank = ranks[myIdx];
       const hiddenCount = rankings.filter((r) => r.hasHidden && r.userId !== user.id).length;
       rankRange = {
-        min: Math.max(1, myIdx + 1 - hiddenCount),
-        max: Math.min(rankings.length, myIdx + 1 + hiddenCount),
+        min: Math.max(1, myRank - hiddenCount),
+        max: Math.min(scoredCount, myRank + hiddenCount),
       };
     }
   }
 
   // MVP
-  const dec = diffDecimals(metric);
   let mvp: { userId: number; name: string; gain: number; metric: string } | null = null;
   if (rankings.length > 0) {
     const top = rankings[0]!;
@@ -365,26 +413,54 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     lowerIsBetter: cfg.lowerIsBetter,
     scoring: "absolute" as const,
     diffDecimals: dec,
+    totalParticipants,
+    winnerCutoff: wCutoff,
     rankType,
     rankRange,
-    rankings: rankings.map((r, i) => ({
-      rank: i + 1,
-      userId: r.userId,
-      name: r.name,
-      isMe: r.userId === user.id,
-      firstVal: r.firstVal,
-      lastVal: r.lastVal,
-      diff: Number(r.weightedDiff.toFixed(dec)),
-      rawDiff: Number(r.rawDiff.toFixed(dec)),
-      weightedDiff: Number(r.weightedDiff.toFixed(dec)),
-      multiplier: r.multiplier,
-      count: r.count,
-      badgeCount: r.badgeCount,
-      submissionCount: r.submissionCount,
-      hasHidden: r.hasHidden,
-      edited: r.edited,
-      isImprovement: r.isImprovement,
-    })),
+    rankings: [
+      ...rankings.map((r, i) => ({
+        rank: ranks[i],
+        userId: r.userId,
+        name: r.name,
+        isMe: r.userId === user.id,
+        entryKey: `u:${r.userId}`,
+        forfeited: false,
+        zone: zoneOf(ranks[i], totalParticipants),
+        firstVal: r.firstVal,
+        lastVal: r.lastVal,
+        diff: Number(r.weightedDiff.toFixed(dec)),
+        rawDiff: Number(r.rawDiff.toFixed(dec)),
+        weightedDiff: Number(r.weightedDiff.toFixed(dec)),
+        multiplier: r.multiplier,
+        count: r.count,
+        badgeCount: r.badgeCount,
+        submissionCount: r.submissionCount,
+        hasHidden: r.hasHidden,
+        edited: r.edited,
+        isImprovement: r.isImprovement,
+      })),
+      ...activeForfeitEntries.map(f => ({
+        rank: forfeitRank,
+        userId: f.userId,
+        name: f.userId ? f.userName : f.name,
+        isMe: f.userId === user.id,
+        entryKey: f.userId ? `u:${f.userId}` : `f:${f.id}`,
+        forfeited: true,
+        zone: zoneOf(forfeitRank, totalParticipants) as "winner" | "loser",
+        firstVal: null,
+        lastVal: null,
+        diff: null,
+        rawDiff: null,
+        weightedDiff: null,
+        multiplier: 1,
+        count: 0,
+        badgeCount: 0,
+        submissionCount: 0,
+        hasHidden: false,
+        edited: false,
+        isImprovement: false,
+      })),
+    ],
     mvp,
     predictions,
     trendData,
