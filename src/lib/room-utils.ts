@@ -1,3 +1,16 @@
+export type MetricKey = "bodyFatPct" | "skeletalMuscle" | "inbodyScore";
+
+export function metricDiff(metric: MetricKey, first: number | null, last: number | null): number | null {
+  if (first == null || last == null) return null;
+  if (metric === "bodyFatPct" && first <= 0) return null;
+  if (metric === "bodyFatPct") return ((last - first) / first) * 100;
+  return last - first;
+}
+
+export function diffDecimals(metric: MetricKey): 1 | 2 {
+  return metric === "bodyFatPct" ? 2 : 1;
+}
+
 export function isRoomEnded(endDate: string, today?: string): boolean {
   const t = today ?? new Date().toISOString().slice(0, 10);
   return endDate <= t;

@@ -1,5 +1,6 @@
 import { eq, and, isNull } from "drizzle-orm";
 import { db, schema } from "../db/index.ts";
+import { metricDiff, diffDecimals } from "./room-utils.ts";
 
 export type RoomPrediction = {
   userId: number;
@@ -8,6 +9,7 @@ export type RoomPrediction = {
   currentValue: number;
   predictedValue: number;
   predictedChange: number;
+  sortKey: number;
   metric: "bodyFatPct" | "skeletalMuscle";
   dataPoints: number;
 };
@@ -131,23 +133,39 @@ export function predictAllInRoom(
 
     const endDays = (new Date(room.endDate).getTime() - firstDate) / (1000 * 60 * 60 * 24);
     const predictedValue = Math.round((reg.slope * endDays + reg.intercept) * 10) / 10;
+    const firstMetricVal = rows[0]![metricField]!;
+
+    if (metricField === "bodyFatPct" && firstMetricVal <= 0) continue;
+
+    const dec = diffDecimals(metricField);
+    let predictedChange: number;
+    let sortKey: number;
+    if (metricField === "bodyFatPct") {
+      predictedChange = Number(((predictedValue - firstMetricVal) / firstMetricVal * 100).toFixed(dec));
+      const rawPredicted = reg.slope * endDays + reg.intercept;
+      sortKey = ((rawPredicted - firstMetricVal) / firstMetricVal) * 100;
+    } else {
+      predictedChange = Number((predictedValue - firstMetricVal).toFixed(dec));
+      sortKey = predictedValue - firstMetricVal;
+    }
 
     predictions.push({
       userId: member.userId,
       name: member.name,
-      firstValue: rows[0]![metricField]!,
+      firstValue: firstMetricVal,
       currentValue: rows[rows.length - 1]![metricField]!,
       predictedValue,
-      predictedChange: Math.round((predictedValue - rows[0]![metricField]!) * 10) / 10,
+      predictedChange,
+      sortKey,
       metric: metricField,
       dataPoints: rows.length,
     });
   }
 
   if (room.mode === "bulk") {
-    predictions.sort((a, b) => b.predictedChange - a.predictedChange);
+    predictions.sort((a, b) => b.sortKey - a.sortKey);
   } else {
-    predictions.sort((a, b) => a.predictedChange - b.predictedChange);
+    predictions.sort((a, b) => a.sortKey - b.sortKey);
   }
 
   return predictions;

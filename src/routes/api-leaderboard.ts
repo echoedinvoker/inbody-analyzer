@@ -4,11 +4,9 @@ import { db, schema } from "../db/index.ts";
 import { requireAuth } from "../lib/session.ts";
 import { getBadgeCount } from "../lib/badges.ts";
 import { predictAllInRoom } from "../lib/predict-room.ts";
-import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember, applyMultiplier } from "../lib/room-utils.ts";
+import { isRoomEnded, applyMirrorFilter, resolveRankType, computeHasHidden, classifyMember, applyMultiplier, metricDiff, diffDecimals, type MetricKey } from "../lib/room-utils.ts";
 
 const apiLeaderboard = new Hono();
-
-type MetricKey = "bodyFatPct" | "skeletalMuscle" | "inbodyScore";
 
 function getMyLatestMeasuredAt(userId: number, roomId: number): string {
   const latest = db
@@ -246,7 +244,9 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     if (firstVal == null || lastVal == null) continue;
 
     const multiplier = m.weightMultiplier ?? 1.0;
-    const rawDiff = lastVal - firstVal;
+    const rawDiffVal = metricDiff(metric, firstVal, lastVal);
+    if (rawDiffVal == null) continue;
+    const rawDiff = rawDiffVal;
     const { value: weightedDiff, isImprovement } = applyMultiplier(rawDiff, multiplier, cfg.lowerIsBetter);
 
     rankings.push({
@@ -288,13 +288,14 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
   }
 
   // MVP
+  const dec = diffDecimals(metric);
   let mvp: { userId: number; name: string; gain: number; metric: string } | null = null;
   if (rankings.length > 0) {
     const top = rankings[0]!;
     mvp = {
       userId: top.userId,
       name: top.name,
-      gain: Number(top.diff.toFixed(1)),
+      gain: Number(top.diff.toFixed(dec)),
       metric,
     };
   }
@@ -305,6 +306,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     name: string;
     predictedValue: number;
     predictedChange: number;
+    metric: string;
   }> = [];
 
   try {
@@ -314,6 +316,7 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       name: p.name,
       predictedValue: p.predictedValue,
       predictedChange: p.predictedChange,
+      metric: p.metric,
     }));
   } catch {}
 
@@ -339,6 +342,8 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       metric,
       metricLabel: cfg.label,
       metricUnit: cfg.unit,
+      scoring: metric === "bodyFatPct" ? "relative" as const : "absolute" as const,
+      diffDecimals: dec,
       rankings: firstOnlyRankings,
       room: {
         mode: room.mode,
@@ -358,6 +363,8 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
     metricLabel: cfg.label,
     metricUnit: cfg.unit,
     lowerIsBetter: cfg.lowerIsBetter,
+    scoring: metric === "bodyFatPct" ? "relative" as const : "absolute" as const,
+    diffDecimals: dec,
     rankType,
     rankRange,
     rankings: rankings.map((r, i) => ({
@@ -367,9 +374,9 @@ apiLeaderboard.get("/api/rooms/:slug/leaderboard", (c) => {
       isMe: r.userId === user.id,
       firstVal: r.firstVal,
       lastVal: r.lastVal,
-      diff: Number(r.weightedDiff.toFixed(1)),
-      rawDiff: Number(r.rawDiff.toFixed(1)),
-      weightedDiff: Number(r.weightedDiff.toFixed(1)),
+      diff: Number(r.weightedDiff.toFixed(dec)),
+      rawDiff: Number(r.rawDiff.toFixed(dec)),
+      weightedDiff: Number(r.weightedDiff.toFixed(dec)),
       multiplier: r.multiplier,
       count: r.count,
       badgeCount: r.badgeCount,
