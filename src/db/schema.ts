@@ -251,6 +251,25 @@ export const roomAdviceCache = sqliteTable(
   })
 );
 
+export const roomForfeits = sqliteTable(
+  "room_forfeits",
+  {
+    id: integer("id").primaryKey({ autoIncrement: true }),
+    roomId: integer("room_id")
+      .notNull()
+      .references(() => rooms.id),
+    userId: integer("user_id").references(() => users.id),
+    name: text("name"),
+    createdBy: integer("created_by")
+      .notNull()
+      .references(() => users.id),
+    createdAt: text("created_at").$defaultFn(() => new Date().toISOString()),
+  },
+  (table) => ({
+    roomUserUnique: unique().on(table.roomId, table.userId),
+  })
+);
+
 export const sessions = sqliteTable("sessions", {
   id: text("id").primaryKey(),
   userId: integer("user_id")

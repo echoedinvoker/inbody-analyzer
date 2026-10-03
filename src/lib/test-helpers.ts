@@ -90,12 +90,23 @@ export function submitToRoom(roomId: number, userId: number, reportId: number, h
   }).returning().get();
 }
 
+export function addForfeit(roomId: number, opts: { userId?: number; name?: string; createdBy: number }) {
+  return db.insert(schema.roomForfeits).values({
+    roomId,
+    userId: opts.userId ?? null,
+    name: opts.name ?? null,
+    createdBy: opts.createdBy,
+    createdAt: new Date().toISOString(),
+  }).returning().get();
+}
+
 export function resetDb() {
   db.delete(schema.roomAdviceCache).run();
   db.delete(schema.roomStreaks).run();
   db.delete(schema.roomSubmissionRejections).run();
   db.delete(schema.reportEdits).run();
   db.delete(schema.roomSubmissions).run();
+  db.delete(schema.roomForfeits).run();
   db.delete(schema.roomMembers).run();
   db.delete(schema.rooms).run();
   db.delete(schema.measurements).run();

@@ -1048,4 +1048,166 @@ rooms.delete("/api/rooms/:slug/submissions/latest", async (c) => {
   });
 });
 
+// --- Forfeit API ---
+
+rooms.get("/api/rooms/:slug/forfeits", async (c) => {
+  const user = requireAuth(c);
+  const { slug } = c.req.param();
+
+  const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  const ownerMembership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, user.id),
+      eq(schema.roomMembers.role, "owner"),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!ownerMembership) return c.json({ error: "Only room owner can manage forfeits" }, 403);
+
+  const forfeits = db.select({
+    id: schema.roomForfeits.id,
+    userId: schema.roomForfeits.userId,
+    name: schema.roomForfeits.name,
+    userName: schema.users.name,
+  })
+    .from(schema.roomForfeits)
+    .leftJoin(schema.users, eq(schema.roomForfeits.userId, schema.users.id))
+    .where(eq(schema.roomForfeits.roomId, room.id))
+    .all();
+
+  return c.json(forfeits.map(f => ({
+    id: f.id,
+    userId: f.userId,
+    name: f.userId ? f.userName : f.name,
+  })));
+});
+
+rooms.post("/api/rooms/:slug/forfeits", async (c) => {
+  const user = requireAuth(c);
+  const { slug } = c.req.param();
+  const body = await c.req.json();
+  const { userId, name } = body;
+
+  const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  const ownerMembership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, user.id),
+      eq(schema.roomMembers.role, "owner"),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!ownerMembership) return c.json({ error: "Only room owner can manage forfeits" }, 403);
+
+  const hasUserId = userId !== undefined && userId !== null;
+  const hasName = typeof name === "string" && name.trim().length > 0;
+
+  if (hasUserId && hasName) return c.json({ error: "Provide either userId or name, not both" }, 400);
+  if (!hasUserId && !hasName) {
+    if (typeof name === "string") return c.json({ error: "Name cannot be blank" }, 400);
+    return c.json({ error: "Provide userId or name" }, 400);
+  }
+
+  if (hasName) {
+    const trimmed = name.trim();
+    if (trimmed.length > 30) return c.json({ error: "Name must be 30 characters or fewer" }, 400);
+
+    // Check duplicate name-only forfeit
+    const existing = db.select().from(schema.roomForfeits)
+      .where(and(
+        eq(schema.roomForfeits.roomId, room.id),
+        eq(schema.roomForfeits.name, trimmed),
+        isNull(schema.roomForfeits.userId)
+      )).get();
+    if (existing) return c.json({ error: "Duplicate forfeit name" }, 409);
+
+    // Check name conflicts with active members
+    const activeMembers = db.select({ name: schema.users.name })
+      .from(schema.roomMembers)
+      .innerJoin(schema.users, eq(schema.roomMembers.userId, schema.users.id))
+      .where(and(
+        eq(schema.roomMembers.roomId, room.id),
+        isNull(schema.roomMembers.leftAt)
+      )).all();
+    if (activeMembers.some(m => m.name === trimmed)) {
+      return c.json({ error: "Name conflicts with an active member" }, 409);
+    }
+
+    const row = db.insert(schema.roomForfeits).values({
+      roomId: room.id,
+      userId: null,
+      name: trimmed,
+      createdBy: user.id,
+      createdAt: new Date().toISOString(),
+    }).returning().get();
+    return c.json({ id: row.id, userId: null, name: trimmed }, 201);
+  }
+
+  // hasUserId path
+  const targetMembership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, userId),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!targetMembership) return c.json({ error: "User is not an active member" }, 404);
+  if (targetMembership.isGhost) return c.json({ error: "Cannot forfeit a ghost member" }, 400);
+
+  // Check duplicate
+  const existingForfeit = db.select().from(schema.roomForfeits).where(
+    and(
+      eq(schema.roomForfeits.roomId, room.id),
+      eq(schema.roomForfeits.userId, userId)
+    )
+  ).get();
+  if (existingForfeit) return c.json({ error: "Member already forfeited" }, 409);
+
+  const row = db.insert(schema.roomForfeits).values({
+    roomId: room.id,
+    userId,
+    name: null,
+    createdBy: user.id,
+    createdAt: new Date().toISOString(),
+  }).returning().get();
+  return c.json({ id: row.id, userId, name: null }, 201);
+});
+
+rooms.delete("/api/rooms/:slug/forfeits/:id", async (c) => {
+  const user = requireAuth(c);
+  const { slug, id } = c.req.param();
+  const forfeitId = parseInt(id, 10);
+
+  if (isNaN(forfeitId)) return c.json({ error: "Invalid id" }, 400);
+
+  const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
+  if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
+
+  const ownerMembership = db.select().from(schema.roomMembers).where(
+    and(
+      eq(schema.roomMembers.roomId, room.id),
+      eq(schema.roomMembers.userId, user.id),
+      eq(schema.roomMembers.role, "owner"),
+      isNull(schema.roomMembers.leftAt)
+    )
+  ).get();
+  if (!ownerMembership) return c.json({ error: "Only room owner can manage forfeits" }, 403);
+
+  const forfeit = db.select().from(schema.roomForfeits).where(
+    and(
+      eq(schema.roomForfeits.id, forfeitId),
+      eq(schema.roomForfeits.roomId, room.id)
+    )
+  ).get();
+  if (!forfeit) return c.json({ error: "Forfeit not found" }, 404);
+
+  db.delete(schema.roomForfeits).where(eq(schema.roomForfeits.id, forfeitId)).run();
+  return c.json({ ok: true });
+});
+
 export default rooms;
