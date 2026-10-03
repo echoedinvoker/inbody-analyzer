@@ -124,6 +124,11 @@ describe("body fat score is relative decrease", () => {
     expect(body.mvp.gain).toBe(-10.93);
     expect(body.scoring).toBe("relative");
     expect(body.diffDecimals).toBe(2);
+
+    // Predictions carry metric field
+    if (body.predictions?.length > 0) {
+      expect(body.predictions[0].metric).toBe("bodyFatPct");
+    }
   });
 
   test("C: weight multiplier applies to relative diff", async () => {
