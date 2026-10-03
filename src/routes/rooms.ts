@@ -1151,6 +1151,7 @@ rooms.post("/api/rooms/:slug/forfeits", async (c) => {
   }
 
   // hasUserId path
+  if (!Number.isInteger(userId)) return c.json({ error: "Invalid userId" }, 400);
   const targetMembership = db.select().from(schema.roomMembers).where(
     and(
       eq(schema.roomMembers.roomId, room.id),
@@ -1170,13 +1171,21 @@ rooms.post("/api/rooms/:slug/forfeits", async (c) => {
   ).get();
   if (existingForfeit) return c.json({ error: "Member already forfeited" }, 409);
 
-  const row = db.insert(schema.roomForfeits).values({
-    roomId: room.id,
-    userId,
-    name: null,
-    createdBy: user.id,
-    createdAt: new Date().toISOString(),
-  }).returning().get();
+  const row = db.transaction((tx) => {
+    tx.delete(schema.roomRewardSettlements)
+      .where(and(
+        eq(schema.roomRewardSettlements.roomId, room.id),
+        eq(schema.roomRewardSettlements.userId, userId)
+      ))
+      .run();
+    return tx.insert(schema.roomForfeits).values({
+      roomId: room.id,
+      userId,
+      name: null,
+      createdBy: user.id,
+      createdAt: new Date().toISOString(),
+    }).returning().get();
+  });
   return c.json({ id: row.id, userId, name: null }, 201);
 });
 
@@ -1225,8 +1234,11 @@ rooms.delete("/api/rooms/:slug/forfeits/:id", async (c) => {
 rooms.put("/api/rooms/:slug/settlements", async (c) => {
   const user = requireAuth(c);
   const { slug } = c.req.param();
-  const body = await c.req.json();
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: "Invalid JSON" }, 400); }
   const { userId: targetUserId, forfeitId: targetForfeitId, settled } = body;
+
+  if (typeof settled !== "boolean") return c.json({ error: "settled must be a boolean" }, 400);
 
   const room = db.select().from(schema.rooms).where(eq(schema.rooms.slug, slug)).get();
   if (!room || !room.isActive) return c.json({ error: "Room not found" }, 404);
@@ -1239,6 +1251,8 @@ rooms.put("/api/rooms/:slug/settlements", async (c) => {
   const hasForfeitId = targetForfeitId !== undefined && targetForfeitId !== null;
   if (hasUserId && hasForfeitId) return c.json({ error: "Provide userId or forfeitId, not both" }, 400);
   if (!hasUserId && !hasForfeitId) return c.json({ error: "Provide userId or forfeitId" }, 400);
+  if (hasUserId && !Number.isInteger(targetUserId)) return c.json({ error: "Invalid userId" }, 400);
+  if (hasForfeitId && !Number.isInteger(targetForfeitId)) return c.json({ error: "Invalid forfeitId" }, 400);
 
   const viewerMembership = db.select().from(schema.roomMembers).where(
     and(
@@ -1292,7 +1306,7 @@ rooms.put("/api/rooms/:slug/settlements", async (c) => {
   }
 
   const standings = computeFinalStandings(room.id);
-  const entry = standings.find(s => s.userId === targetUserId && !s.forfeited);
+  const entry = standings.find(s => s.userId === targetUserId);
   if (!entry) return c.json({ error: "Target not in final standings" }, 404);
 
   if (settled) {
