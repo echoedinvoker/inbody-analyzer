@@ -57,6 +57,30 @@ export function computeHasHidden<T extends { measuredAt: string | null }>(
   });
 }
 
+export function rankKey(value: number, decimals: number): number {
+  return Number(value.toFixed(decimals));
+}
+
+export function competitionRanks(keys: number[]): number[] {
+  const ranks: number[] = [];
+  for (let i = 0; i < keys.length; i++) {
+    if (i > 0 && keys[i] === keys[i - 1]) {
+      ranks.push(ranks[i - 1]);
+    } else {
+      ranks.push(i + 1);
+    }
+  }
+  return ranks;
+}
+
+export function winnerCutoff(total: number): number {
+  return Math.floor(total / 2);
+}
+
+export function zoneOf(rank: number, total: number): "winner" | "loser" {
+  return rank <= winnerCutoff(total) ? "winner" : "loser";
+}
+
 export function classifyMember(
   actualCount: number,
   minSubs: number,

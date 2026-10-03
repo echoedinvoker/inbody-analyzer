@@ -3,6 +3,7 @@ import {
   isRoomEnded, applyMirrorFilter, applyDateMirrorFilter,
   resolveRankType, computeHasHidden, classifyMember, applyMultiplier,
   metricDiff, diffDecimals,
+  competitionRanks, winnerCutoff, zoneOf, rankKey,
 } from "./room-utils.ts";
 
 describe("isRoomEnded", () => {
@@ -192,5 +193,44 @@ describe("diffDecimals", () => {
   });
   test("inbodyScore → 1", () => {
     expect(diffDecimals("inbodyScore")).toBe(1);
+  });
+});
+
+describe("competitionRanks", () => {
+  test("U1: room 8 real data — ties get same rank, next skips", () => {
+    expect(competitionRanks([-4.1, -1.6, -1.1, -0.6, -0.5, -0.5, -0.4, -0.3, 1.8]))
+      .toEqual([1, 2, 3, 4, 5, 5, 7, 8, 9]);
+  });
+  test("U2: all same → all rank 1", () => {
+    expect(competitionRanks([1, 1, 1])).toEqual([1, 1, 1]);
+  });
+  test("U3: empty → empty", () => {
+    expect(competitionRanks([])).toEqual([]);
+  });
+});
+
+describe("winnerCutoff", () => {
+  test("U4: floor division", () => {
+    expect(winnerCutoff(10)).toBe(5);
+    expect(winnerCutoff(9)).toBe(4);
+    expect(winnerCutoff(2)).toBe(1);
+    expect(winnerCutoff(1)).toBe(0);
+    expect(winnerCutoff(0)).toBe(0);
+  });
+});
+
+describe("zoneOf", () => {
+  test("U5: winner/loser boundary", () => {
+    expect(zoneOf(5, 10)).toBe("winner");
+    expect(zoneOf(6, 10)).toBe("loser");
+    expect(zoneOf(5, 9)).toBe("loser");
+    expect(zoneOf(4, 9)).toBe("winner");
+  });
+});
+
+describe("rankKey", () => {
+  test("U6: floating point trap — both round to -0.5", () => {
+    expect(rankKey(-0.5000000000000036, 1)).toBe(rankKey(-0.4999999999999964, 1));
+    expect(rankKey(-0.5000000000000036, 1)).toBe(-0.5);
   });
 });
